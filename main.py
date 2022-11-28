@@ -16,9 +16,6 @@ REFINE_OUTPUT = True
 
 # Load the MobileNet weights, return an executor and context
 def get_executor(use_gpu=True):
-    # torch_module = TSN(len(categories), 8, 'rgb')
-    # torch_module.load_state_dict(torch.load("INPUT NAME OF OUR PRETRAINED MODEL"))
-
     torch_module = MobileNetV2(n_class=27)
     # checkpoint not downloaded
     checkpoint = "mobilenetv2_jester_online.pth.tar"
@@ -40,10 +37,34 @@ def get_executor(use_gpu=True):
     else:
         target = 'llvm -mcpu=cortex-a72 -target=armv7l-linux-gnueabihf'
 
-    def executor(input, buffer):
-        return torch_module(input, *buffer)
+    torch_module.eval()
+    with torch.no_grad():
+        def executor(input, buffer):
+            return torch_module(input, *buffer)
+        return executor, target
 
-    return executor, target
+
+def get_phonepackaging_executor():
+    torch_module = TSN(num_class=len(categories), 
+                        num_segments=25, 
+                        modality='rgb',
+                        base_model='resnet50',
+                        is_shift=True,
+                        )
+    weights = "TSM_PhonePackaging_RGB_resnet50_shift8_blockres_avg_segment8_e50.pth.tar"
+    checkpoint = torch.load(weights, map_location=torch.device('cpu'))
+    checkpoint = checkpoint['state_dict']
+    sd = {'.'.join(k.split('.')[1:]): v for k, v in list(checkpoint.items())}
+    replace_dict = {'base_model.classifier.weight': 'new_fc.weight',
+                    'base_model.classifier.bias': 'new_fc.bias',
+                    }
+    for k, v in replace_dict.items():
+        if k in sd:
+            sd[v] = sd.pop(k)
+    torch_module.load_state_dict(sd)
+    torch_module.eval()
+    with torch.no_grad():
+        return torch_module, "empty target..."
 
 
 def transform(frame: np.ndarray):
@@ -158,9 +179,9 @@ def process_output(idx_, history):
         idx_ = 2
 
     # history smoothing
-    # if idx_ != history[-1]:
-    #     if not (history[-1] == history[-2]): #  and history[-2] == history[-3]):
-    #         idx_ = history[-1]
+    if idx_ != history[-1]:
+        if not (history[-1] == history[-2]): #  and history[-2] == history[-3]):
+            idx_ = history[-1]
 
     history.append(idx_)
     history = history[-max_hist_len:]
@@ -169,75 +190,73 @@ def process_output(idx_, history):
 
 
 # WE DON'T HAVE A LABEL FOR IDLE ACTIONS
-# categories = [
-#     "pick up phone box",                        # 0
-#     "open phone box",                           # 1
-#     "put down phone box ",                      # 2
-#     "put down phone box cover",                 # 3
-#     "pick up phone from phone box",             # 4
-#     "put down phone on table",                  # 5
-#     "pick up instruction paper from phone box",  # 6
-#     "put down instruction paper on table",      # 7
-#     "pick up earphones from phone box",         # 8
-#     "put down earphones on table",              # 9
-#     "pick up charger from phone box",           # 10
-#     "put down charger on table",                # 11
-#     "pick up charger from table",               # 12
-#     "put down charger into phone box",          # 13
-#     "pick up earphones from table",             # 14
-#     "put down earphones into phone box",        # 15
-#     "pick up instruction paper from table",     # 16
-#     "put down instruction paper into phone box",  # 17
-#     "pick up phone from table",                 # 18
-#     "inspect phone",                            # 19
-#     "put down phone into phone box",            # 20
-#     "pick up phone box cover",                  # 21
-#     "close phone box",                          # 22
-# ]
-
 categories = [
-    "Doing other things",  # 0
-    "Drumming Fingers",  # 1
-    "No gesture",  # 2
-    "Pulling Hand In",  # 3
-    "Pulling Two Fingers In",  # 4
-    "Pushing Hand Away",  # 5
-    "Pushing Two Fingers Away",  # 6
-    "Rolling Hand Backward",  # 7
-    "Rolling Hand Forward",  # 8
-    "Shaking Hand",  # 9
-    "Sliding Two Fingers Down",  # 10
-    "Sliding Two Fingers Left",  # 11
-    "Sliding Two Fingers Right",  # 12
-    "Sliding Two Fingers Up",  # 13
-    "Stop Sign",  # 14
-    "Swiping Down",  # 15
-    "Swiping Left",  # 16
-    "Swiping Right",  # 17
-    "Swiping Up",  # 18
-    "Thumb Down",  # 19
-    "Thumb Up",  # 20
-    "Turning Hand Clockwise",  # 21
-    "Turning Hand Counterclockwise",  # 22
-    "Zooming In With Full Hand",  # 23
-    "Zooming In With Two Fingers",  # 24
-    "Zooming Out With Full Hand",  # 25
-    "Zooming Out With Two Fingers"  # 26
+    "pick up phone box",                        # 0
+    "open phone box",                           # 1
+    "put down phone box ",                      # 2
+    "put down phone box cover",                 # 3
+    "pick up phone from phone box",             # 4
+    "put down phone on table",                  # 5
+    "pick up instruction paper from phone box",  # 6
+    "put down instruction paper on table",      # 7
+    "pick up earphones from phone box",         # 8
+    "put down earphones on table",              # 9
+    "pick up charger from phone box",           # 10
+    "put down charger on table",                # 11
+    "pick up charger from table",               # 12
+    "put down charger into phone box",          # 13
+    "pick up earphones from table",             # 14
+    "put down earphones into phone box",        # 15
+    "pick up instruction paper from table",     # 16
+    "put down instruction paper into phone box",# 17
+    "pick up phone from table",                 # 18
+    "inspect phone",                            # 19
+    "put down phone into phone box",            # 20
+    "pick up phone box cover",                  # 21
+    "close phone box",                          # 22
 ]
 
+# categories_mobilenetv2 = [
+#     "Doing other things",  # 0
+#     "Drumming Fingers",  # 1
+#     "No gesture",  # 2
+#     "Pulling Hand In",  # 3
+#     "Pulling Two Fingers In",  # 4
+#     "Pushing Hand Away",  # 5
+#     "Pushing Two Fingers Away",  # 6
+#     "Rolling Hand Backward",  # 7
+#     "Rolling Hand Forward",  # 8
+#     "Shaking Hand",  # 9
+#     "Sliding Two Fingers Down",  # 10
+#     "Sliding Two Fingers Left",  # 11
+#     "Sliding Two Fingers Right",  # 12
+#     "Sliding Two Fingers Up",  # 13
+#     "Stop Sign",  # 14
+#     "Swiping Down",  # 15
+#     "Swiping Left",  # 16
+#     "Swiping Right",  # 17
+#     "Swiping Up",  # 18
+#     "Thumb Down",  # 19
+#     "Thumb Up",  # 20
+#     "Turning Hand Clockwise",  # 21
+#     "Turning Hand Counterclockwise",  # 22
+#     "Zooming In With Full Hand",  # 23
+#     "Zooming In With Two Fingers",  # 24
+#     "Zooming Out With Full Hand",  # 25
+#     "Zooming Out With Two Fingers"  # 26
+# ]
+
+# For visualizing activation of layers
 activation_hist = {
     "layer0": [],
     "layer6": [],
     "layer12": [],
     "layer18": [],
 }
-# activation_array = []
 
 def get_activation(name):
     def hook(model, input, output):
         activation_hist[name].append(output)
-
-        # activation_array.append(output)
     return hook
 
 
@@ -264,23 +283,10 @@ def main():
     print("Build transformer...")
     transform = get_transform()
     print("Build Executor...")
-    executor, ctx = get_executor()
+    # executor, ctx = get_executor()
+    executor, ctx = get_phonepackaging_executor()
 
     # Specific for MobileNetV2?
-    # buffer = [
-    #     np.empty((1, 3, 56, 56)),
-    #     np.empty((1, 4, 28, 28)),
-    #     np.empty((1, 4, 28, 28)),
-    #     np.empty((1, 8, 14, 14)),
-    #     np.empty((1, 8, 14, 14)),
-    #     np.empty((1, 8, 14, 14)),
-    #     np.empty((1, 12, 14, 14)),
-    #     np.empty((1, 12, 14, 14)),
-    #     np.empty((1, 20, 7, 7)),
-    #     np.empty((1, 20, 7, 7))
-    # ]
-    # buffer = [torch.from_numpy(n) for n in buffer]
-
     buffer = [torch.zeros([1, 3, 56, 56]),
               torch.zeros([1, 4, 28, 28]),
               torch.zeros([1, 4, 28, 28]),
@@ -302,6 +308,7 @@ def main():
     while True:
         i_frame += 1
         _, img = cap.read()  # (480, 640, 3) 0 ~ 255
+        # Random frame for testing
         # img = np.random.randint(255, size=(240, 320, 3), dtype=np.uint8)
         if i_frame % 2 == 0:  # skip every other frame to obtain a suitable frame rate
             t1 = time.time()
@@ -310,10 +317,8 @@ def main():
                 img_tran.view(1, 3, img_tran.size(1), img_tran.size(2)))
 
             img_nd = input_var.numpy()
-            # inputs = [img_nd,] + buffer
             outputs = executor(torch.from_numpy(img_nd), buffer)
             feat, buffer = outputs[0], outputs[1:]
-            # assert isinstance(feat, np.ndarray)
 
             feat = feat.detach().numpy()
             if SOFTMAX_THRES > 0:
@@ -386,35 +391,37 @@ def main():
 
 main()
 
-# print(f"History len: {len(activation_array)}")
 
-# act = activation_hist['layer0'][0][0][0]
-# print(f"Number of kernels: {act.size(0)}")
-# print(f"Figsize: {act.size(1)}")
+def save_activations():
+    print(f"History len: {len(activation_array)}")
+
+    act = activation_hist['layer0'][0][0][0]
+    print(f"Number of kernels: {act.size(0)}")
+    print(f"Figsize: {act.size(1)}")
 
 
-# act = activation_hist['layer6'][0][0][0]
-# print(f"Number of kernels: {act.size(0)}")
-# print(f"Figsize: {act.size(1)}")
+    act = activation_hist['layer6'][0][0][0]
+    print(f"Number of kernels: {act.size(0)}")
+    print(f"Figsize: {act.size(1)}")
 
-# act = activation_hist['layer12'][0][0][0]
-# print(f"Number of kernels: {act.size(0)}")
-# print(f"Figsize: {act.size(1)}")
+    act = activation_hist['layer12'][0][0][0]
+    print(f"Number of kernels: {act.size(0)}")
+    print(f"Figsize: {act.size(1)}")
 
-# act = activation_hist['layer18'][0][0][0]
-# print(f"Number of kernels: {act.size(0)}")
-# print(f"Figsize: {act.size(1)}")
+    act = activation_hist['layer18'][0][0][0]
+    print(f"Number of kernels: {act.size(0)}")
+    print(f"Figsize: {act.size(1)}")
 
-# for layer_name, activation_array in activation_hist.items():
-#     for idx, activation_at_time in enumerate(activation_array):
-#         acti = activation_at_time[0][0]
-#         hw = (8, int(acti.size(0)/8))
-#         width = max(min(hw), 1)
-#         height = max(hw)
-#         fig, axarr = plt.subplots(width, height, sharex=True, sharey=True, figsize=(12,8))
-#         axarr = axarr.ravel()
-#         for i in range(acti.size(0)):
-#             axarr[i].imshow(acti[i].detach())
-#             os.makedirs(f"temp1/{layer_name}", exist_ok=True)
-#             fig.savefig(f"temp1/{layer_name}/fig{idx}.png")
-#         plt.close()
+    for layer_name, activation_array in activation_hist.items():
+        for idx, activation_at_time in enumerate(activation_array):
+            acti = activation_at_time[0][0]
+            hw = (8, int(acti.size(0)/8))
+            width = max(min(hw), 1)
+            height = max(hw)
+            fig, axarr = plt.subplots(width, height, sharex=True, sharey=True, figsize=(12,8))
+            axarr = axarr.ravel()
+            for i in range(acti.size(0)):
+                axarr[i].imshow(acti[i].detach())
+                os.makedirs(f"temp1/{layer_name}", exist_ok=True)
+                fig.savefig(f"temp1/{layer_name}/fig{idx}.png")
+            plt.close()

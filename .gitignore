@@ -1,6 +1,7 @@
 temp/
 temp1/
 mobilenetv2_jester_online.pth.tar
+TSM_PhonePackaging_RGB_resnet50_shift8_blockres_avg_segment8_e50.pth.tar
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
