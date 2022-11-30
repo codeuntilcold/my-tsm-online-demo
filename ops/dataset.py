@@ -5,9 +5,7 @@ import os
 import os.path
 import numpy as np
 from numpy.random import randint
-import torch
 from torch.utils import data
-from tqdm import tqdm
 from PIL import Image
 
 class VideoRecord(object):

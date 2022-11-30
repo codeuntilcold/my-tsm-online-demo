@@ -3,68 +3,59 @@ import cv2
 import time
 import torch
 import torchvision
-import os
 from PIL import Image
 from ops.models import TSN
-from tsm_mobilenet_v2 import MobileNetV2
-import matplotlib.pyplot as plt
+from ops.transforms import *
+from numpy.random import randint
 
-SOFTMAX_THRES = 0
-HISTORY_LOGIT = True
-REFINE_OUTPUT = True
+SOFTMAX_THRES = 0.7
+HISTORY_LOGIT = False
+REFINE_OUTPUT = False
+DEVICE = 'dml'
 
 
 # Load the MobileNet weights, return an executor and context
-def get_executor(use_gpu=True):
-    torch_module = MobileNetV2(n_class=27)
-    # checkpoint not downloaded
-    checkpoint = "mobilenetv2_jester_online.pth.tar"
-    # checkpoint = "TSM_kinetics_RGB_mobilenetv2_shift8_blockres_avg_segment8_e100_dense.pth"
-    if not os.path.exists(checkpoint):
-        print('Downloading PyTorch checkpoint...')
-        import urllib.request
-        url = f'https://hanlab.mit.edu/projects/tsm/models/{checkpoint}'
-        urllib.request.urlretrieve(url, f'./{checkpoint}')
-    torch_module.load_state_dict(torch.load(checkpoint))
-
-    # torch_module.features[0].register_forward_hook(get_activation('layer0'))
-    # torch_module.features[6].register_forward_hook(get_activation('layer6'))
-    # torch_module.features[12].register_forward_hook(get_activation('layer12'))
-    # torch_module.features[11].register_forward_hook(get_activation('layer18'))
-
-    if use_gpu:
-        target = 'cuda'
+def parse_shift_option_from_log_name(log_name):
+    if 'shift' in log_name:
+        strings = log_name.split('_')
+        for i, s in enumerate(strings):
+            if 'shift' in s:
+                break
+        return True, int(strings[i].replace('shift', '')), strings[i + 1]
     else:
-        target = 'llvm -mcpu=cortex-a72 -target=armv7l-linux-gnueabihf'
+        return False, None, None
 
-    torch_module.eval()
+def get_executor(use_gpu=True):
+    path_pretrain = 'TSM_PhonePackaging_RGB_resnet50_shift8_blockres_avg_segment8_e50.pth.tar'
+    is_shift, shift_div, shift_place = parse_shift_option_from_log_name(path_pretrain)
+    torch_module = TSN(23, 8, 'RGB',
+                base_model=path_pretrain.split('TSM_')[1].split('_')[2],
+                consensus_type='avg',
+                img_feature_dim=256,
+                pretrain='imagenet',
+                is_shift=is_shift, shift_div=shift_div, shift_place=shift_place,
+                non_local='_nl' in path_pretrain)
+
+    # checkpoint not downloaded
+    if path_pretrain:
+        print(f"=> Load pretrain model from '{path_pretrain}'")
+        checkpoint = torch.load(path_pretrain, map_location=torch.device(DEVICE))
+        checkpoint = checkpoint['state_dict']
+
+        sd = {'.'.join(k.split('.')[1:]): v for k, v in list(checkpoint.items())}
+        replace_dict = {'base_model.classifier.weight': 'new_fc.weight',
+                        'base_model.classifier.bias': 'new_fc.bias',
+                        }
+        for k, v in replace_dict.items():
+            if k in sd:
+                sd[v] = sd.pop(k)
+
+        torch_module.load_state_dict(sd)
+        torch_module.to(DEVICE)
+        torch_module.eval()
+
     with torch.no_grad():
-        def executor(input, buffer):
-            return torch_module(input, *buffer)
-        return executor, target
-
-
-def get_phonepackaging_executor():
-    torch_module = TSN(num_class=len(categories), 
-                        num_segments=8,
-                        modality='RGB',
-                        base_model='resnet50',
-                        is_shift=True,
-                        )
-    weights = "TSM_PhonePackaging_RGB_resnet50_shift8_blockres_avg_segment8_e50.pth.tar"
-    checkpoint = torch.load(weights, map_location=torch.device('cpu'))
-    checkpoint = checkpoint['state_dict']
-    sd = {'.'.join(k.split('.')[1:]): v for k, v in list(checkpoint.items())}
-    replace_dict = {'base_model.classifier.weight': 'new_fc.weight',
-                    'base_model.classifier.bias': 'new_fc.bias',
-                    }
-    for k, v in replace_dict.items():
-        if k in sd:
-            sd[v] = sd.pop(k)
-    torch_module.load_state_dict(sd)
-    torch_module.eval()
-    with torch.no_grad():
-        return torch_module, "empty target..."
+        return torch_module
 
 
 def transform(frame: np.ndarray):
@@ -179,9 +170,10 @@ def process_output(idx_, history):
         idx_ = 2
 
     # history smoothing
-    if idx_ != history[-1]:
-        if not (history[-1] == history[-2]): #  and history[-2] == history[-3]):
-            idx_ = history[-1]
+    # if idx_ != history[-1]:
+    #     if not (history[-1] == history[-2]): #  and history[-2] == history[-3]):
+    #         idx_ = history[-1]
+
 
     history.append(idx_)
     history = history[-max_hist_len:]
@@ -190,74 +182,33 @@ def process_output(idx_, history):
 
 
 # WE DON'T HAVE A LABEL FOR IDLE ACTIONS
-# categories = [
-#     "pick up phone box",                        # 0
-#     "open phone box",                           # 1
-#     "put down phone box ",                      # 2
-#     "put down phone box cover",                 # 3
-#     "pick up phone from phone box",             # 4
-#     "put down phone on table",                  # 5
-#     "pick up instruction paper from phone box", # 6
-#     "put down instruction paper on table",      # 7
-#     "pick up earphones from phone box",         # 8
-#     "put down earphones on table",              # 9
-#     "pick up charger from phone box",           # 10
-#     "put down charger on table",                # 11
-#     "pick up charger from table",               # 12
-#     "put down charger into phone box",          # 13
-#     "pick up earphones from table",             # 14
-#     "put down earphones into phone box",        # 15
-#     "pick up instruction paper from table",     # 16
-#     "put down instruction paper into phone box",# 17
-#     "pick up phone from table",                 # 18
-#     "inspect phone",                            # 19
-#     "put down phone into phone box",            # 20
-#     "pick up phone box cover",                  # 21
-#     "close phone box",                          # 22
-# ]
-
 categories = [
-    "Doing other things",  # 0
-    "Drumming Fingers",  # 1
-    "No gesture",  # 2
-    "Pulling Hand In",  # 3
-    "Pulling Two Fingers In",  # 4
-    "Pushing Hand Away",  # 5
-    "Pushing Two Fingers Away",  # 6
-    "Rolling Hand Backward",  # 7
-    "Rolling Hand Forward",  # 8
-    "Shaking Hand",  # 9
-    "Sliding Two Fingers Down",  # 10
-    "Sliding Two Fingers Left",  # 11
-    "Sliding Two Fingers Right",  # 12
-    "Sliding Two Fingers Up",  # 13
-    "Stop Sign",  # 14
-    "Swiping Down",  # 15
-    "Swiping Left",  # 16
-    "Swiping Right",  # 17
-    "Swiping Up",  # 18
-    "Thumb Down",  # 19
-    "Thumb Up",  # 20
-    "Turning Hand Clockwise",  # 21
-    "Turning Hand Counterclockwise",  # 22
-    "Zooming In With Full Hand",  # 23
-    "Zooming In With Two Fingers",  # 24
-    "Zooming Out With Full Hand",  # 25
-    "Zooming Out With Two Fingers"  # 26
+    "pick up phone box",                        # 0
+    "open phone box",                           # 1
+    "put down phone box ",                      # 2
+    "put down phone box cover",                 # 3
+    "pick up phone from phone box",             # 4
+    "put down phone on table",                  # 5
+    "pick up instruction paper from phone box",  # 6
+    "put down instruction paper on table",      # 7
+    "pick up earphones from phone box",         # 8
+    "put down earphones on table",              # 9
+    "pick up charger from phone box",           # 10
+    "put down charger on table",                # 11
+    "pick up charger from table",               # 12
+    "put down charger into phone box",          # 13
+    "pick up earphones from table",             # 14
+    "put down earphones into phone box",        # 15
+    "pick up instruction paper from table",     # 16
+    "put down instruction paper into phone box",  # 17
+    "pick up phone from table",                 # 18
+    "inspect phone",                            # 19
+    "put down phone into phone box",            # 20
+    "pick up phone box cover",                  # 21
+    "close phone box",                          # 22
+    "no action"
 ]
 
-# For visualizing activation of layers
-activation_hist = {
-    "layer0": [],
-    "layer6": [],
-    "layer12": [],
-    "layer18": [],
-}
-
-def get_activation(name):
-    def hook(model, input, output):
-        activation_hist[name].append(output)
-    return hook
 
 
 def main():
@@ -283,22 +234,25 @@ def main():
     print("Build transformer...")
     transform = get_transform()
     print("Build Executor...")
-    executor, ctx = get_executor()
-    # executor, ctx = get_phonepackaging_executor()
+    executor = get_executor()
 
-    # Specific for MobileNetV2?
-    buffer = [torch.zeros([1, 3, 56, 56]),
-              torch.zeros([1, 4, 28, 28]),
-              torch.zeros([1, 4, 28, 28]),
-              torch.zeros([1, 8, 14, 14]),
-              torch.zeros([1, 8, 14, 14]),
-              torch.zeros([1, 8, 14, 14]),
-              torch.zeros([1, 12, 14, 14]),
-              torch.zeros([1, 12, 14, 14]),
-              torch.zeros([1, 20, 7, 7]),
-              torch.zeros([1, 20, 7, 7])]
+    def get_offset_segment(num_frames):
+        print("num_frames: ", num_frames)
+        new_length = 1
+        num_segments = 8
+        average_duration = (num_frames - new_length + 1) // num_segments
+        if average_duration > 0:
+            offsets = np.multiply(list(range(num_segments)), average_duration) + randint(average_duration, size=num_segments)
+        elif num_frames > num_segments:
+            offsets = np.sort(randint(num_frames - new_length + 1, size=num_segments))
+        else:
+            offsets = np.zeros((num_segments,))
 
-    idx = 0
+        return offsets
+
+    buffer = []
+
+    idx = 23
     history = [2]
     history_logit = []
 
@@ -308,22 +262,28 @@ def main():
     while True:
         i_frame += 1
         _, img = cap.read()  # (480, 640, 3) 0 ~ 255
-        # Random frame for testing
-        # img = np.random.randint(255, size=(240, 320, 3), dtype=np.uint8)
         if i_frame % 2 == 0:  # skip every other frame to obtain a suitable frame rate
             t1 = time.time()
+            img = cv2.resize(img, (256, 256))
             img_tran = transform([Image.fromarray(img).convert('RGB')])
             input_var = torch.autograd.Variable(
-                img_tran.view(1, 3, img_tran.size(1), img_tran.size(2)))
+                img_tran.view(3, img_tran.size(1), img_tran.size(2)))
 
             img_nd = input_var.numpy()
-            outputs = executor(torch.from_numpy(img_nd), buffer)
-            # img_nd = np.random.randint(255, size=(1, 8, 3, 256, 256), dtype=np.uint8)
-            # outputs = executor(torch.from_numpy(img_nd).float())
-            feat, buffer = outputs[0], outputs[1:]
-            # feat = outputs
+            buffer.append(img_nd)
+            if len(buffer) > 32:
+                buffer = buffer[-32:]
+            offset = get_offset_segment(len(buffer))
+            inputs = []
+            for index in list(offset):
+                inputs.append(buffer[int(index)])
+            feat = executor(torch.from_numpy(np.array(inputs)).float().to(DEVICE))
 
-            feat = feat.detach().numpy()
+            if DEVICE == 'cpu':
+                feat = feat.detach().numpy()
+            else:
+                feat = feat.detach().cpu().numpy()
+
             if SOFTMAX_THRES > 0:
                 feat_np = feat.reshape(-1)
                 feat_np -= feat_np.max()
@@ -346,7 +306,7 @@ def main():
             idx, history = process_output(idx_, history)
 
             t2 = time.time()
-            # print(f"{index} {categories[idx]}")
+            print(f"{index} {categories[idx]}")
 
             current_time = t2 - t1
 
@@ -359,7 +319,7 @@ def main():
                     (0, int(height / 16)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7, (0, 0, 0), 2)
-        cv2.putText(label, '{:.5f} Vid/s'.format(1 / current_time),
+        cv2.putText(label, '{:.5f} Vid/s'.format(current_time),
                     (width - 170, int(height / 16)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7, (0, 0, 0), 2)
@@ -393,38 +353,3 @@ def main():
 
 
 main()
-
-
-def save_activations():
-    print(f"History len: {len(activation_array)}")
-
-    act = activation_hist['layer0'][0][0][0]
-    print(f"Number of kernels: {act.size(0)}")
-    print(f"Figsize: {act.size(1)}")
-
-
-    act = activation_hist['layer6'][0][0][0]
-    print(f"Number of kernels: {act.size(0)}")
-    print(f"Figsize: {act.size(1)}")
-
-    act = activation_hist['layer12'][0][0][0]
-    print(f"Number of kernels: {act.size(0)}")
-    print(f"Figsize: {act.size(1)}")
-
-    act = activation_hist['layer18'][0][0][0]
-    print(f"Number of kernels: {act.size(0)}")
-    print(f"Figsize: {act.size(1)}")
-
-    for layer_name, activation_array in activation_hist.items():
-        for idx, activation_at_time in enumerate(activation_array):
-            acti = activation_at_time[0][0]
-            hw = (8, int(acti.size(0)/8))
-            width = max(min(hw), 1)
-            height = max(hw)
-            fig, axarr = plt.subplots(width, height, sharex=True, sharey=True, figsize=(12,8))
-            axarr = axarr.ravel()
-            for i in range(acti.size(0)):
-                axarr[i].imshow(acti[i].detach())
-                os.makedirs(f"temp1/{layer_name}", exist_ok=True)
-                fig.savefig(f"temp1/{layer_name}/fig{idx}.png")
-            plt.close()
