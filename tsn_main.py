@@ -7,11 +7,12 @@ from PIL import Image
 from ops.models import TSN
 from ops.transforms import *
 from numpy.random import randint
+import os
 
-SOFTMAX_THRES = 0.7
+SOFTMAX_THRES = 0.2
 HISTORY_LOGIT = False
 REFINE_OUTPUT = False
-DEVICE = 'dml'
+DEVICE = 'cpu'
 
 
 # Load the MobileNet weights, return an executor and context
@@ -212,16 +213,16 @@ categories = [
 
 
 def main():
-    print("Open camera...")
-    cap = cv2.VideoCapture(0)
+    # print("Open camera...")
+    # cap = cv2.VideoCapture(0)
 
-    print(cap)
+    # print(cap)
 
-    # set a lower resolution for speed up
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+    # # set a lower resolution for speed up
+    # cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+    # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
-    # env variables
+    # # env variables
     full_screen = False
     WINDOW_NAME = 'Video Gesture Recognition'
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
@@ -232,12 +233,11 @@ def main():
     t = None
     index = 0
     print("Build transformer...")
-    transform = get_transform()
+    transform_crop = get_transform()
     print("Build Executor...")
     executor = get_executor()
 
     def get_offset_segment(num_frames):
-        print("num_frames: ", num_frames)
         new_length = 1
         num_segments = 8
         average_duration = (num_frames - new_length + 1) // num_segments
@@ -250,34 +250,46 @@ def main():
 
         return offsets
 
-    buffer = []
+    buffer = torch.tensor([])
 
-    idx = 23
+    idx_no_action = 23
     history = [2]
     history_logit = []
 
     i_frame = -1
 
-    print("Ready!")
-    while True:
-        i_frame += 1
-        _, img = cap.read()  # (480, 640, 3) 0 ~ 255
-        if i_frame % 2 == 0:  # skip every other frame to obtain a suitable frame rate
-            t1 = time.time()
-            img = cv2.resize(img, (256, 256))
-            img_tran = transform([Image.fromarray(img).convert('RGB')])
-            input_var = torch.autograd.Variable(
-                img_tran.view(3, img_tran.size(1), img_tran.size(2)))
+    all_images = []
+    dirname = "D:\\1_University\\HK221\\1_specialized_project\\dataset\\labeling\\8_1_4_20221105"
+    # dirname = "T5_2_1"
+    # for img_name in os.listdir(dirname):
+    for i in range(130, 176):
+        img = cv2.imread(os.path.join(dirname, f"{i:010d}.jpg"))
+        all_images.append(img)
+        # cv2.imshow("YO", img)
+        # cv2.waitKey(100)
 
-            img_nd = input_var.numpy()
-            buffer.append(img_nd)
-            if len(buffer) > 32:
-                buffer = buffer[-32:]
+    print("Ready!")
+    # while True:
+    history_len = 16
+    
+    for image_index in range(len(all_images)):
+        i_frame += 1
+        # _, img = cap.read()  # (480, 640, 3) 0 ~ 255
+        img = all_images[image_index]
+        if i_frame % 1 == 0:  # skip every other frame to obtain a suitable frame rate
+            t1 = time.time()
+            img_resize = cv2.resize(img, (256, 256))
+            img_tran = transform_crop([Image.fromarray(img_resize).convert('RGB')])
+            input_var = torch.autograd.Variable(
+                img_tran.view(1, 3, img_tran.size(1), img_tran.size(2)))
+
+            buffer = torch.cat((buffer, input_var))
+            print(buffer.shape)
+            if len(buffer) > history_len:
+                buffer = buffer[-history_len:]
             offset = get_offset_segment(len(buffer))
-            inputs = []
-            for index in list(offset):
-                inputs.append(buffer[int(index)])
-            feat = executor(torch.from_numpy(np.array(inputs)).float().to(DEVICE))
+            inputs = buffer[list(offset)]
+            feat = executor(inputs.to(DEVICE))
 
             if DEVICE == 'cpu':
                 feat = feat.detach().numpy()
@@ -293,7 +305,7 @@ def main():
                 if max(softmax) > SOFTMAX_THRES:
                     idx_ = np.argmax(feat, axis=1)[0]
                 else:
-                    idx_ = idx
+                    idx_ = idx_no_action
             else:
                 idx_ = np.argmax(feat, axis=1)[0]
 
@@ -303,10 +315,10 @@ def main():
                 avg_logit = sum(history_logit)
                 idx_ = np.argmax(avg_logit, axis=1)[0]
 
-            idx, history = process_output(idx_, history)
+            idx_, history = process_output(idx_, history)
 
             t2 = time.time()
-            print(f"{index} {categories[idx]}")
+            print(f"{index} {categories[idx_]}")
 
             current_time = t2 - t1
 
@@ -315,16 +327,17 @@ def main():
         height, width, _ = img.shape
         label = np.zeros([height // 10, width, 3]).astype('uint8') + 255
 
-        cv2.putText(label, 'Prediction: ' + categories[idx],
+        cv2.putText(label, ' ' + categories[idx_],
                     (0, int(height / 16)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7, (0, 0, 0), 2)
-        cv2.putText(label, '{:.5f} Vid/s'.format(current_time),
+        cv2.putText(label, '{:.2f} at {:05d}'.format(max(softmax), image_index),
                     (width - 170, int(height / 16)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7, (0, 0, 0), 2)
 
         img = np.concatenate((img, label), axis=0)
+        cv2.imwrite(f"8_1_4\\{image_index:010d}.png", img)
         cv2.imshow(WINDOW_NAME, img)
 
         key = cv2.waitKey(1)
@@ -348,7 +361,7 @@ def main():
             index += 1
             t = nt
 
-    cap.release()
+    # cap.release()
     cv2.destroyAllWindows()
 
 
