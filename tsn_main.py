@@ -1,3 +1,4 @@
+from cv2 import CAP_DSHOW
 import numpy as np
 import cv2
 import time
@@ -9,11 +10,13 @@ from ops.transforms import *
 from numpy.random import randint
 import os
 
-SOFTMAX_THRES = 0.5
+SOFTMAX_THRES = 0.1
 HISTORY_LOGIT = False
-REFINE_OUTPUT = True
+REFINE_OUTPUT = False
 DEVICE = 'cuda'
-NUM_CLASS = 11
+NUM_CLASS = 12
+LOGITECH_CAM = True
+CAMERA_ID = 1
 
 # Load the MobileNet weights, return an executor and context
 def parse_shift_option_from_log_name(log_name):
@@ -27,11 +30,16 @@ def parse_shift_option_from_log_name(log_name):
         return False, None, None
 
 def get_executor(use_gpu=True):
-    path_pretrain = 'checkpoints/TSM_PhonePackaging_RGB_resnet50_shift8_blockres_avg_segment8_e50/ckpt_sliding.best.pth.tar'
-    is_shift, shift_div, shift_place = parse_shift_option_from_log_name(path_pretrain)
-    shift_div = 4
+    # path_pretrain = 'checkpoints/TSM_PhonePackaging_RGB_resnet50_shift8_blockres_avg_segment8_e50/ckpt_sliding.best.pth.tar'
+    path_pretrain = 'checkpoints/no_action_shift_8/ckpt.best.pth.tar'
+    # path_pretrain = 'checkpoints/extradata_slidingwindow32+64_shift8/ckpt.best.pth.tar'
+    # path_pretrain = 'checkpoints/extradata_slidingwindow32_shift8/ckpt.best.pth.tar'
+
+    # path_pretrain = 'checkpoints/no_action_shift_8/ckpt.best.pth.tar'
+    is_shift, shift_div, shift_place = True, 8, "blockres" #parse_shift_option_from_log_name(path_pretrain)
+    base_model = 'resnet50' # path_pretrain.split('TSM_')[1].split('_')[2]
     torch_module = TSN(NUM_CLASS, 8, 'RGB',
-                base_model=path_pretrain.split('TSM_')[1].split('_')[2],
+                base_model=base_model,
                 consensus_type='avg',
                 img_feature_dim=256,
                 pretrain='imagenet',
@@ -169,7 +177,9 @@ def process_output(idx_, history):
 
     # history smoothing
     if idx_ != history[-1]:
-        if not (history[-1] == history[-2]): #  and history[-2] == history[-3]):
+        if not (history[-1] == history[-2] \
+            and history[-2] == history[-3] \
+            and history[-3] == history[-4]):
             idx_ = history[-1]
 
     history.append(idx_)
@@ -223,19 +233,24 @@ categories = [
 
 def main():
     # print("Open camera...")
-    cap = cv2.VideoCapture(0)
+    # cap = cv2.VideoCapture(1, apiPreference=CAP_DSHOW)
+    # cap = cv2.VideoCapture(1)
+    if LOGITECH_CAM:
+        cap = cv2.VideoCapture(CAMERA_ID, apiPreference=CAP_DSHOW)
+    else:
+        cap = cv2.VideoCapture(CAMERA_ID)
 
     print(cap)
 
     # set a lower resolution for speed up
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+    # cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+    # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
     # env variables
     full_screen = False
     WINDOW_NAME = 'Video Gesture Recognition'
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(WINDOW_NAME, 640, 480)
+    cv2.resizeWindow(WINDOW_NAME, 640, 640)
     cv2.moveWindow(WINDOW_NAME, 0, 0)
     cv2.setWindowTitle(WINDOW_NAME, WINDOW_NAME)
 
@@ -283,7 +298,12 @@ def main():
     while True:
     # for image_index in range(len(all_images)):
         # img = all_images[image_index]
-        _, img = cap.read()  # (480, 640, 3) 0 ~ 255
+        ret, img = cap.read()  # (480, 640, 3) 0 ~ 255
+        
+        if not ret:
+            print("failed to grab frame")
+            continue
+        
         i_frame += 1
         if i_frame % 1 == 0:  # skip every other frame to obtain a suitable frame rate
             t1 = time.time()
@@ -333,7 +353,9 @@ def main():
             weight_per_window = np.array([[1]*NUM_CLASS, [1]*NUM_CLASS])
             softmaxes = np.sum(softmaxes * weight_per_window, axis=0)
             # print(softmaxes)
-            idx_s = np.argsort(softmaxes)[-5:]
+            
+            TOP_K = 5
+            idx_s = np.argsort(softmaxes)[-TOP_K:]
             # if idx_ == idx_no_action:
             #     idx_s = np.append(idx_s, [idx_])
             
@@ -350,7 +372,7 @@ def main():
 
             current_time = t2 - t1
 
-        img = cv2.resize(img, (640, 480))
+        # img = cv2.resize(img, (640, 480))
         img = img[:, ::-1]
         height, width, _ = img.shape
         label = np.zeros([height // 2, width, 3]).astype('uint8') + 255
@@ -358,12 +380,14 @@ def main():
         image_index = i_frame
 
         for i, idx_ in enumerate(idx_s[::-1]):
-            cv2.putText(label, ' ' + categories[idx_],
+            acc = softmax[idx_]
+            
+            cv2.putText(label, ' ' + categories[idx_] if acc > SOFTMAX_THRES else ' ---',
                         (0, int(height / 16) + i*25),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.7, (0, 0, 0), 2)
             
-            cv2.putText(label, '{:.2f}'.format(softmax[idx_]),
+            cv2.putText(label, '{:.2f}'.format(acc),
                         (width - 170, int(height / 16) + i*25),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.7, (0, 0, 0), 2)
