@@ -1,5 +1,6 @@
-temp/
-temp1/
+temp*/
+8_1_4/
+T*/
 checkpoints/
 frames/
 mobilenetv2_jester_online.pth.tar
