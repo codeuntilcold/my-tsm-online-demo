@@ -29,6 +29,7 @@ def parse_shift_option_from_log_name(log_name):
     else:
         return False, None, None
 
+
 def get_executor(use_gpu=True):
     # path_pretrain = 'checkpoints/TSM_PhonePackaging_RGB_resnet50_shift8_blockres_avg_segment8_e50/ckpt_sliding.best.pth.tar'
     path_pretrain = 'checkpoints/no_action_shift_8/ckpt.best.pth.tar'
@@ -171,10 +172,6 @@ def process_output(idx_, history):
 
     max_hist_len = 32  # max history buffer
 
-    # mask out illegal action
-    # if idx_ in [4,6,8,10]:
-    #     idx_ = history[-1]
-
     # history smoothing
     if idx_ != history[-1]:
         if not (history[-1] == history[-2] \
@@ -188,53 +185,23 @@ def process_output(idx_, history):
     return history[-1], history
 
 
-# WE DON'T HAVE A LABEL FOR IDLE ACTIONS
-# categories = [
-#     "pick up phone box",                        # 0
-#     "open phone box",                           # 1
-#     "put down phone box ",                      # 2
-#     "put down phone box cover",                 # 3
-#     "pick up phone from phone box",             # 4
-#     "put down phone on table",                  # 5
-#     "pick up instruction paper from phone box",  # 6
-#     "put down instruction paper on table",      # 7
-#     "pick up earphones from phone box",         # 8
-#     "put down earphones on table",              # 9
-#     "pick up charger from phone box",           # 10
-#     "put down charger on table",                # 11
-#     "pick up charger from table",               # 12
-#     "put down charger into phone box",          # 13
-#     "pick up earphones from table",             # 14
-#     "put down earphones into phone box",        # 15
-#     "pick up instruction paper from table",     # 16
-#     "put down instruction paper into phone box",  # 17
-#     "pick up phone from table",                 # 18
-#     "inspect phone",                            # 19
-#     "put down phone into phone box",            # 20
-#     "pick up phone box cover",                  # 21
-#     "close phone box",                          # 22
-#     "no action"
-# ]
-
 categories = [
-"open phone box",
-"take out phone",
-"take out instruction paper",
-"take out earphones",
-"take out charger",
-"put in charger",
-"put in earphones",
-"put in instruction paper",
-"inspect phone",
-"put in phone",
-"close phone box",
-"no action"
+    "open phone box",
+    "take out phone",
+    "take out instruction paper",
+    "take out earphones",
+    "take out charger",
+    "put in charger",
+    "put in earphones",
+    "put in instruction paper",
+    "inspect phone",
+    "put in phone",
+    "close phone box",
+    "no action"
 ]
 
 def main():
-    # print("Open camera...")
-    # cap = cv2.VideoCapture(1, apiPreference=CAP_DSHOW)
-    # cap = cv2.VideoCapture(1)
+    print("Open camera...")
     if LOGITECH_CAM:
         cap = cv2.VideoCapture(CAMERA_ID, apiPreference=CAP_DSHOW)
     else:
@@ -248,7 +215,7 @@ def main():
 
     # env variables
     full_screen = False
-    WINDOW_NAME = 'Video Gesture Recognition'
+    WINDOW_NAME = 'Phone Packaging Inspection'
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW_NAME, 640, 640)
     cv2.moveWindow(WINDOW_NAME, 0, 0)
