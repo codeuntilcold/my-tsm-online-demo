@@ -6,40 +6,58 @@ import torch
 import torchvision
 from PIL import Image
 from ops.models import TSN
-from ops.transforms import *
+from ops.transforms import GroupScale, GroupCenterCrop, Stack, ToTorchFormatTensor, GroupNormalize 
 from numpy.random import randint
-import os
+import argparse
 
-SOFTMAX_THRES = 0.1
-HISTORY_LOGIT = False
-REFINE_OUTPUT = False
+parser = argparse.ArgumentParser(description='TSM for phone packaging recognition')
+parser.add_argument('-c','--class', help='Number of action class', required=True, type=int)
+parser.add_argument('-r','--refine', help='Refine output by smoothing history', required=False)
+parser.add_argument('-l','--logit', help='Refine output by averaging', required=False)
+parser.add_argument('-t','--thres', help='Softmax threshold', default=0.1, type=float)
+parser.add_argument('-w','--webcam', help='Using external webcam', default=False)
+parser.add_argument('-i','--idcam', help='ID of camera', default=1, type=int)
+parser.add_argument('-k','--topk', help='Print top-k', default=1, type=int)
+args = vars(parser.parse_args())
+
 DEVICE = 'cuda'
-NUM_CLASS = 12
-LOGITECH_CAM = True
-CAMERA_ID = 1
+NUM_CLASS = args['class']
+NUM_SEGMENTS = 8
+TOP_K = args['topk']
+SOFTMAX_THRES = args['thres']
+HISTORY_LOGIT = args['logit']
+REFINE_OUTPUT = args['refine']
+LOGITECH_CAM = args['webcam']
+CAMERA_ID = args['idcam']
+CATEGORIES = [
+    "open phone box",
+    "take out phone",
+    "take out instruction paper",
+    "take out earphones",
+    "take out charger",
+    "put in charger",
+    "put in earphones",
+    "put in instruction paper",
+    "inspect phone",
+    "put in phone",
+    "close phone box",
+    "no action"
+]
+PATHS = [
+    'checkpoints/TSM_PhonePackaging_RGB_resnet50_shift8_blockres_avg_segment8_e50/ckpt_sliding.best.pth.tar', #0
+    'checkpoints/no_action_shift_8/ckpt.best.pth.tar', #1
+    'checkpoints/extradata_slidingwindow32+64_shift8/ckpt.best.pth.tar', #2
+    'checkpoints/extradata_slidingwindow32_shift8/ckpt.best.pth.tar', #3
+    'checkpoints/no_action_shift_8/ckpt.best.pth.tar' #4
+]
 
-# Load the MobileNet weights, return an executor and context
-def parse_shift_option_from_log_name(log_name):
-    if 'shift' in log_name:
-        strings = log_name.split('_')
-        for i, s in enumerate(strings):
-            if 'shift' in s:
-                break
-        return True, int(strings[i].replace('shift', '')), strings[i + 1]
-    else:
-        return False, None, None
-
-
-def get_executor(use_gpu=True):
-    # path_pretrain = 'checkpoints/TSM_PhonePackaging_RGB_resnet50_shift8_blockres_avg_segment8_e50/ckpt_sliding.best.pth.tar'
-    path_pretrain = 'checkpoints/no_action_shift_8/ckpt.best.pth.tar'
-    # path_pretrain = 'checkpoints/extradata_slidingwindow32+64_shift8/ckpt.best.pth.tar'
-    # path_pretrain = 'checkpoints/extradata_slidingwindow32_shift8/ckpt.best.pth.tar'
-
-    # path_pretrain = 'checkpoints/no_action_shift_8/ckpt.best.pth.tar'
-    is_shift, shift_div, shift_place = True, 8, "blockres" #parse_shift_option_from_log_name(path_pretrain)
-    base_model = 'resnet50' # path_pretrain.split('TSM_')[1].split('_')[2]
-    torch_module = TSN(NUM_CLASS, 8, 'RGB',
+def get_executor():
+    path_pretrain = PATHS[1]
+    # is_shift, shift_div, shift_place = parse_shift_option_from_log_name(path_pretrain)
+    # base_model = path_pretrain.split('TSM_')[1].split('_')[2]
+    is_shift, shift_div, shift_place = True, 8, "blockres"
+    base_model = 'resnet50'
+    torch_module = TSN(NUM_CLASS, NUM_SEGMENTS, 'RGB',
                 base_model=base_model,
                 consensus_type='avg',
                 img_feature_dim=256,
@@ -47,7 +65,6 @@ def get_executor(use_gpu=True):
                 is_shift=is_shift, shift_div=shift_div, shift_place=shift_place,
                 non_local='_nl' in path_pretrain)
 
-    # checkpoint not downloaded
     if path_pretrain:
         print(f"=> Load pretrain model from '{path_pretrain}'")
         checkpoint = torch.load(path_pretrain, map_location=torch.device(DEVICE))
@@ -79,78 +96,6 @@ def transform(frame: np.ndarray):
 
 
 def get_transform():
-    class GroupScale(object):
-        """ Rescales the input PIL.Image to the given 'size'.
-        'size' will be the size of the smaller edge.
-        For example, if height > width, then image will be
-        rescaled to (size * height / width, size)
-        size: size of the smaller edge
-        interpolation: Default: PIL.Image.BILINEAR
-        """
-
-        def __init__(self, size, interpolation=Image.BILINEAR):
-            self.worker = torchvision.transforms.Resize(size, interpolation)
-
-        def __call__(self, img_group):
-            return [self.worker(img) for img in img_group]
-
-    class GroupCenterCrop(object):
-        def __init__(self, size):
-            self.worker = torchvision.transforms.CenterCrop(size)
-
-        def __call__(self, img_group):
-            return [self.worker(img) for img in img_group]
-
-    class Stack(object):
-
-        def __init__(self, roll=False):
-            self.roll = roll
-
-        def __call__(self, img_group):
-            if img_group[0].mode == 'L':
-                return np.concatenate([np.expand_dims(x, 2) for x in img_group], axis=2)
-            elif img_group[0].mode == 'RGB':
-                if self.roll:
-                    return np.concatenate([np.array(x)[:, :, ::-1] for x in img_group], axis=2)
-                else:
-                    return np.concatenate(img_group, axis=2)
-
-    class ToTorchFormatTensor(object):
-        """ Converts a PIL.Image (RGB) or numpy.ndarray (H x W x C) in the range [0, 255]
-        to a torch.FloatTensor of shape (C x H x W) in the range [0.0, 1.0] """
-
-        def __init__(self, div=True):
-            self.div = div
-
-        def __call__(self, pic):
-            if isinstance(pic, np.ndarray):
-                # handle numpy array
-                img = torch.from_numpy(pic).permute(2, 0, 1).contiguous()
-            else:
-                # handle PIL Image
-                img = torch.ByteTensor(
-                    torch.ByteStorage.from_buffer(pic.tobytes()))
-                img = img.view(pic.size[1], pic.size[0], len(pic.mode))
-                # put it from HWC to CHW format
-                # yikes, this transpose takes 80% of the loading time/CPU
-                img = img.transpose(0, 1).transpose(0, 2).contiguous()
-            return img.float().div(255) if self.div else img.float()
-
-    class GroupNormalize(object):
-        def __init__(self, mean, std):
-            self.mean = mean
-            self.std = std
-
-        def __call__(self, tensor):
-            rep_mean = self.mean * (tensor.size()[0] // len(self.mean))
-            rep_std = self.std * (tensor.size()[0] // len(self.std))
-
-            # TODO: make efficient
-            for t, m, s in zip(tensor, rep_mean, rep_std):
-                t.sub_(m).div_(s)
-
-            return tensor
-
     cropping = torchvision.transforms.Compose([
         GroupScale(256),
         GroupCenterCrop(224),
@@ -174,9 +119,7 @@ def process_output(idx_, history):
 
     # history smoothing
     if idx_ != history[-1]:
-        if not (history[-1] == history[-2] \
-            and history[-2] == history[-3] \
-            and history[-3] == history[-4]):
+        if history[-1] != history[-2]:
             idx_ = history[-1]
 
     history.append(idx_)
@@ -185,20 +128,19 @@ def process_output(idx_, history):
     return history[-1], history
 
 
-categories = [
-    "open phone box",
-    "take out phone",
-    "take out instruction paper",
-    "take out earphones",
-    "take out charger",
-    "put in charger",
-    "put in earphones",
-    "put in instruction paper",
-    "inspect phone",
-    "put in phone",
-    "close phone box",
-    "no action"
-]
+def get_offset_segment(num_frames):
+    new_length = 1
+    num_segments = 8
+    average_duration = (num_frames - new_length + 1) // num_segments
+    if average_duration > 0:
+        offsets = np.multiply(list(range(num_segments)), average_duration) + randint(average_duration, size=num_segments)
+    elif num_frames > num_segments:
+        offsets = np.sort(randint(num_frames - new_length + 1, size=num_segments))
+    else:
+        offsets = np.zeros((num_segments,))
+
+    return offsets
+
 
 def main():
     print("Open camera...")
@@ -206,7 +148,6 @@ def main():
         cap = cv2.VideoCapture(CAMERA_ID, apiPreference=CAP_DSHOW)
     else:
         cap = cv2.VideoCapture(CAMERA_ID)
-
     print(cap)
 
     # set a lower resolution for speed up
@@ -221,171 +162,144 @@ def main():
     cv2.moveWindow(WINDOW_NAME, 0, 0)
     cv2.setWindowTitle(WINDOW_NAME, WINDOW_NAME)
 
-    t = None
-    index = 0
     print("Build transformer...")
     transform_crop = get_transform()
     print("Build Executor...")
     executor = get_executor()
 
-    def get_offset_segment(num_frames):
-        new_length = 1
-        num_segments = 8
-        average_duration = (num_frames - new_length + 1) // num_segments
-        if average_duration > 0:
-            offsets = np.multiply(list(range(num_segments)), average_duration) + randint(average_duration, size=num_segments)
-        elif num_frames > num_segments:
-            offsets = np.sort(randint(num_frames - new_length + 1, size=num_segments))
-        else:
-            offsets = np.zeros((num_segments,))
-
-        return offsets
-
+    idx_no_action = len(CATEGORIES)
     buffer = torch.tensor([])
-
-    idx_no_action = NUM_CLASS
     history = [2]
+    history_lens = [32]
     history_logit = []
 
-    i_frame = -1
-
-    ##### Read frames from images
-    # all_images = []
-    # dirname = "frames/4_1_2_20221105"
-    # for img_name in os.listdir(dirname):
-    # # for i in range(1004, 1045 + 1):
-    # #     img_name = f"{i:010d}.jpg"
-    #     img = cv2.imread(os.path.join(dirname, img_name))
-    #     all_images.append(img)
-    #     # cv2.imshow("YO", img)
-    #     # cv2.waitKey(100)
-
     print("Ready!")
-    history_lens = [32]
     while True:
-    # for image_index in range(len(all_images)):
-        # img = all_images[image_index]
         ret, img = cap.read()  # (480, 640, 3) 0 ~ 255
-        
         if not ret:
             print("failed to grab frame")
             continue
         
-        i_frame += 1
-        if i_frame % 1 == 0:  # skip every other frame to obtain a suitable frame rate
-            t1 = time.time()
-            img_resize = cv2.resize(img, (256, 256))
-            img_tran = transform_crop([Image.fromarray(img_resize).convert('RGB')])
+        t1 = time.time()
+
+        img_resize = cv2.resize(img, (256, 256))
+        img_tran = transform_crop([Image.fromarray(img_resize).convert('RGB')])
+        input_var = torch.autograd.Variable(img_tran.view(1, 3, img_tran.size(1), img_tran.size(2)))
+
+        # Save input up to present
+        buffer = torch.cat((buffer, input_var))
+        buffer = buffer[-64:]
+        
+        # For each history lengths, get sampled input vectors
+        inputs = []
+        for w in history_lens:
+            window = buffer[-w:]
+            offset = get_offset_segment(len(window))
+            inputs.append(window[offset])
+        
+        # For each input, execute and get output feature
+        feats = []
+        for inp in inputs:
+            inp = inp.to(DEVICE)
+            feats.append(executor(inp))
+            inp.detach()
+
+        # For each output feature, calculate softmax
+        softmaxes = []
+        for feat in feats:
+            feat = feat.detach().numpy() if DEVICE == 'cpu' \
+                else feat.detach().cpu().numpy()
             
-            # Show transformed image
-            # cv2.imshow(WINDOW_NAME, img_tran.permute(1, 2, 0).numpy())
-           
-            input_var = torch.autograd.Variable(
-                img_tran.view(1, 3, img_tran.size(1), img_tran.size(2)))
+            feat_np = feat.reshape(-1)
+            feat_np -= feat_np.max()
+            softmax = np.exp(feat_np) / np.sum(np.exp(feat_np))
+            softmaxes.append(softmax)
+            idx_ = np.argmax(feat, axis=1)[0] if max(softmax) > SOFTMAX_THRES else idx_no_action
 
-            buffer = torch.cat((buffer, input_var))
-            buffer = buffer[-64:]
-            
-            inputs = []
-            for w in history_lens:
-                window = buffer[-w:]
-                offset = get_offset_segment(len(window))
-                inputs.append(window[offset])
-            
-            feats = []
-            for inp in inputs:
-                inp = inp.to(DEVICE)
-                feats.append(executor(inp))
-                inp.detach()
+        # Weight by history length/window
+        weight_per_window = np.array([[1]*NUM_CLASS, [1]*NUM_CLASS])
+        softmaxes = np.sum(softmaxes * weight_per_window, axis=0)
+        idx_s = np.argsort(softmaxes)[-TOP_K:]
+        
+        if HISTORY_LOGIT:
+            history_logit.append(feat)
+            history_logit = history_logit[-12:]
+            avg_logit = sum(history_logit)
+            idx_ = np.argmax(avg_logit, axis=1)[0]
 
-            softmaxes = []
-            for feat in feats:
-                feat = feat.detach().numpy() if DEVICE == 'cpu' \
-                    else feat.detach().cpu().numpy()
-                
-                if SOFTMAX_THRES > 0:
-                    feat_np = feat.reshape(-1)
-                    feat_np -= feat_np.max()
-                    softmax = np.exp(feat_np) / np.sum(np.exp(feat_np))
+        if REFINE_OUTPUT:
+            idx_, history = process_output(idx_, history)
 
-                    softmaxes.append(softmax)
-                    sorted_softmax = np.argsort(softmax)[-5:]
-                    # print(sorted_softmax)
-                    # print(softmax[sorted_softmax])
-
-                    idx_ = np.argmax(feat, axis=1)[0] if max(softmax) > SOFTMAX_THRES else idx_no_action
-                else:
-                    idx_ = np.argmax(feat, axis=1)[0]
-            
-            weight_per_window = np.array([[1]*NUM_CLASS, [1]*NUM_CLASS])
-            softmaxes = np.sum(softmaxes * weight_per_window, axis=0)
-            # print(softmaxes)
-            
-            TOP_K = 5
-            idx_s = np.argsort(softmaxes)[-TOP_K:]
-            # if idx_ == idx_no_action:
-            #     idx_s = np.append(idx_s, [idx_])
-            
-            if HISTORY_LOGIT:
-                history_logit.append(feat)
-                history_logit = history_logit[-12:]
-                avg_logit = sum(history_logit)
-                idx_ = np.argmax(avg_logit, axis=1)[0]
-
-            # idx_, history = process_output(idx_, history)
-
-            t2 = time.time()
-            # print(f"{index} {categories[idx_]}")
-
-            current_time = t2 - t1
+        t2 = time.time()
+        exec_time = t2 - t1
 
         # img = cv2.resize(img, (640, 480))
         img = img[:, ::-1]
         height, width, _ = img.shape
-        label = np.zeros([height // 2, width, 3]).astype('uint8') + 255
-
-        image_index = i_frame
+        whiteboard = np.zeros([height // 2, width, 3]).astype('uint8') + 255
 
         for i, idx_ in enumerate(idx_s[::-1]):
             acc = softmax[idx_]
             
-            cv2.putText(label, ' ' + categories[idx_] if acc > SOFTMAX_THRES else ' ---',
-                        (0, int(height / 16) + i*25),
+            cv2.putText(whiteboard, f"{CATEGORIES[idx_] if acc>SOFTMAX_THRES else '-'}",
+                        (8, int(height / 16) + i*25),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.7, (0, 0, 0), 2)
             
-            cv2.putText(label, '{:.2f}'.format(acc),
+            cv2.putText(whiteboard, f"{acc:.2f}",
                         (width - 170, int(height / 16) + i*25),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.7, (0, 0, 0), 2)
+        
+        cv2.putText(whiteboard, f"FPS: {1.0 / exec_time:2f}",
+                    (8, height - 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7, (0, 0, 0), 2)
 
-        img = np.concatenate((img, label), axis=0)
-        # cv2.imwrite(f"4_1_1\\{image_index:010d}.png", img)
+        img = np.concatenate((img, whiteboard), axis=0)
         cv2.imshow(WINDOW_NAME, img)
 
         key = cv2.waitKey(1)
         if key & 0xFF == ord('q') or key == 27:  # exit
             break
         elif key == ord('F') or key == ord('f'):  # full screen
-            print('Changing full screen option!')
+            print('Toggle full screen option!')
             full_screen = not full_screen
-            if full_screen:
-                print('Setting FS!!!')
-                cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_FULLSCREEN,
-                                      cv2.WINDOW_FULLSCREEN)
-            else:
-                cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_FULLSCREEN,
-                                      cv2.WINDOW_NORMAL)
+            cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_FULLSCREEN, 
+                                  cv2.WINDOW_FULLSCREEN if full_screen else cv2.WINDOW_NORMAL)
 
-        if t is None:
-            t = time.time()
-        else:
-            nt = time.time()
-            index += 1
-            t = nt
-
-    # cap.release()
+    cap.release()
     cv2.destroyAllWindows()
 
 
-main()
+if __name__ == "__main__":
+    main()
+
+# Load the MobileNet weights, return an executor and context
+# def parse_shift_option_from_log_name(log_name):
+#     if 'shift' in log_name:
+#         strings = log_name.split('_')
+#         for i, s in enumerate(strings):
+#             if 'shift' in s:
+#                 break
+#         return True, int(strings[i].replace('shift', '')), strings[i + 1]
+#     else:
+#         return False, None, None
+
+##### Read frames from images
+# all_images = []
+# dirname = "frames/4_1_2_20221105"
+# for img_name in os.listdir(dirname):
+# # for i in range(1004, 1045 + 1):
+# #     img_name = f"{i:010d}.jpg"
+#     img = cv2.imread(os.path.join(dirname, img_name))
+#     all_images.append(img)
+#     # cv2.imshow("YO", img)
+#     # cv2.waitKey(100)
+##### Load images
+# for image_index in range(len(all_images)):
+    # img = all_images[image_index]        
+##### Write image to folder
+# cv2.imwrite(f"4_1_1\\{image_index:010d}.png", img)
+##### Show transformed image
+# cv2.imshow(WINDOW_NAME, img_tran.permute(1, 2, 0).numpy())
