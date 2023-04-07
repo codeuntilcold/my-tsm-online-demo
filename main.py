@@ -182,7 +182,9 @@ def main():
     print("Ready!")
     while True:
         ret, img = cap.read()  # (480, 640, 3) 0 ~ 255
-        yolov7.detect([img])
+        # tmp=np.random.rand(480,640,3)*255
+        with torch.no_grad():
+            yolov7.detect([img])
         print("BUGGGGGGGGGGGGGG")
         
         if not ret:

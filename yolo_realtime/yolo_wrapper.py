@@ -52,7 +52,6 @@ class Yolo_Wrapper:  # multiple IP or RTSP cameras
 
 
     def detect(self, im0s, save_img=False):
-
         img = self.pre_process(im0s)
         img = torch.from_numpy(img).to(self.device)
         img = img.half() if self.half else img.float()  # uint8 to fp16/32
@@ -72,12 +71,14 @@ class Yolo_Wrapper:  # multiple IP or RTSP cameras
             pred = self.model(img, augment=False)[0]
         t2 = time_synchronized()
         # Apply NMS
-        pred = non_max_suppression(pred, 0.25, 0.45, classes=None, agnostic=False)
+        print(pred)
+        pred = non_max_suppression(pred, 0, 0.45, classes=None, agnostic=False)
         t3 = time_synchronized()
         # Apply Classifier
         if self.classify:
             pred = apply_classifier(pred, self.modelc, img, im0s)
         # Process detections
+        # print(pred)
         for i, det in enumerate(pred):  # detections per image
             p, s, im0 = '0', '%g: ' % i, im0s[i].copy()
 
