@@ -1,3 +1,6 @@
+import sys
+sys.path.append('./yolo_realtime')
+
 from cv2 import CAP_DSHOW
 import numpy as np
 import cv2
@@ -8,10 +11,11 @@ from PIL import Image
 from ops.models import TSN
 from ops.transforms import GroupScale, GroupCenterCrop, Stack, ToTorchFormatTensor, GroupNormalize 
 from numpy.random import randint
+from yolo_realtime.yolo_wrapper import *
 import argparse
 
 parser = argparse.ArgumentParser(description='TSM for phone packaging recognition')
-parser.add_argument('-c','--class', help='Number of action class', required=True, type=int)
+parser.add_argument('-c','--class', default=11, help='Number of action class', required=False, type=int)
 parser.add_argument('-r','--refine', help='Refine output by smoothing history', required=False)
 parser.add_argument('-l','--logit', help='Refine output by averaging', required=False)
 parser.add_argument('-t','--thres', help='Softmax threshold', default=0.1, type=float)
@@ -51,8 +55,10 @@ PATHS = [
     'checkpoints/no_action_shift_8/ckpt.best.pth.tar' #4
 ]
 
+yolov7 = Yolo_Wrapper()
+
 def get_executor():
-    path_pretrain = PATHS[1]
+    path_pretrain = PATHS[0]
     # is_shift, shift_div, shift_place = parse_shift_option_from_log_name(path_pretrain)
     # base_model = path_pretrain.split('TSM_')[1].split('_')[2]
     is_shift, shift_div, shift_place = True, 8, "blockres"
@@ -176,6 +182,9 @@ def main():
     print("Ready!")
     while True:
         ret, img = cap.read()  # (480, 640, 3) 0 ~ 255
+        yolov7.detect([img])
+        print("BUGGGGGGGGGGGGGG")
+        
         if not ret:
             print("failed to grab frame")
             continue
