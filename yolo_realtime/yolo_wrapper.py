@@ -10,21 +10,21 @@ from utils.datasets import LoadStreams, LoadImages
 from utils.general import check_img_size, non_max_suppression, apply_classifier, \
     scale_coords, xyxy2xywh
 from utils.torch_utils import select_device, load_classifier, time_synchronized, TracedModel
+from utils.plots import plot_one_box
 
 # CONFIGURATION
 DEVICE = '0'
 CHECKPOINT = './yolo_realtime/checkpoint/yolov7_tiny_phone_packaging_enhance_dataset/weights/best.pt'
 TRACE = False
-WEBCAM = True
 DATA_SOURCE = '0'      # folder path for inference image or video, 0 for webcam
 import numpy as np
 
 class Yolo_Wrapper:  # multiple IP or RTSP cameras
-    def __init__(self, checkpoint_path="", img_size=640):
+    def __init__(self, checkpoint_path="", device=DEVICE, img_size=640):
         self.checkpoint_path = checkpoint_path
         self.img_size = img_size
-        self.device = select_device(DEVICE)
-        self.half = self.device.type != 'cpu'  # half precision only supported on CUDA
+        self.device = select_device(device)
+        self.half = False # self.device.type != 'cpu'  # half precision only supported on CUDA
         self.model = attempt_load(CHECKPOINT, map_location=self.device)
         self.stride = int(self.model.stride.max())  # model stride
         self.imgsz = check_img_size(640, s=self.stride)
@@ -39,10 +39,9 @@ class Yolo_Wrapper:  # multiple IP or RTSP cameras
             self.modelc = load_classifier(name='resnet101', n=2)  # initialize
             self.modelc.load_state_dict(torch.load('weights/resnet101.pt', map_location=self.device)['model']).to(self.device).eval()
 
-
-
         # Get names and colors
         self.names = self.model.module.names if hasattr(self.model, 'module') else self.model.names
+        self.colors = [[random.randint(0, 255) for _ in range(3)] for _ in self.names]
 
         # Run inference
         if self.device.type != 'cpu':
@@ -59,20 +58,20 @@ class Yolo_Wrapper:  # multiple IP or RTSP cameras
         if img.ndimension() == 3:
             img = img.unsqueeze(0)
         # Warmup
-        if self.device.type != 'cpu' and (self.old_img_b != img.shape[0] or self.old_img_h != img.shape[2] or self.old_img_w != img.shape[3]):
-            self.old_img_b = img.shape[0]
-            self.old_img_h = img.shape[2]
-            self.old_img_w = img.shape[3]
-            for i in range(3):
-                self.model(img, augment=False)[0]
+        # if self.device.type != 'cpu' and (self.old_img_b != img.shape[0] or self.old_img_h != img.shape[2] or self.old_img_w != img.shape[3]):
+        #     self.old_img_b = img.shape[0]
+        #     self.old_img_h = img.shape[2]
+        #     self.old_img_w = img.shape[3]
+        #     for i in range(3):
+        #         print(f"Warmup {i}: {self.model(img, augment=False)[0]}")
         # Inference
         t1 = time_synchronized()
         with torch.no_grad():   # Calculating gradients would cause a GPU memory leak
             pred = self.model(img, augment=False)[0]
+            # print(pred)
         t2 = time_synchronized()
         # Apply NMS
-        print(pred)
-        pred = non_max_suppression(pred, 0, 0.45, classes=None, agnostic=False)
+        pred = non_max_suppression(pred, 0.4, 0.45, classes=None, agnostic=False)
         t3 = time_synchronized()
         # Apply Classifier
         if self.classify:
@@ -92,11 +91,18 @@ class Yolo_Wrapper:  # multiple IP or RTSP cameras
                     s += f"{n} {self.names[int(c)]}{'s' * (n > 1)}, "  # add to string
                 # Write results
                 for *xyxy, conf, cls in reversed(det):
-                #     if save_txt:  # Write to file
                     xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
                     line = (cls, *xywh, conf)  # label format
-                    print(('%g ' * len(line)).rstrip() % line)
-                print('\n ------------------------------------ \n')
+                    label = f'{self.names[int(cls)]} {conf:.2f}'
+                    
+                    if "Hand" not in label and conf > 0.4:
+                        plot_one_box(xyxy, im0, label=label, color=self.colors[int(cls)], line_thickness=1)
+
+                    # print(('%g ' * len(line)).rstrip() % line)
+            cv2.putText(im0, f"{len(det)}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7, (0, 0, 255), 2)
+            cv2.imshow("aaa", im0)
+        cv2.waitKey(1)
 
     def pre_process(self, img0):
         img = [self.letterbox(x, self.img_size, auto=True, stride=self.stride)[0] for x in img0]

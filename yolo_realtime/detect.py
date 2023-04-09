@@ -14,7 +14,7 @@ from utils.torch_utils import select_device, load_classifier, time_synchronized,
 
 # CONFIGURATION
 DEVICE = '0'
-CHECKPOINT = './checkpoint/yolov7_tiny_phone_packaging_enhance_dataset/weights/best.pt'
+CHECKPOINT = 'D:/Study document/Luận văn/tsn-online-demo/yolo_realtime/checkpoint/yolov7_tiny_phone_packaging_enhance_dataset/weights/best.pt'
 TRACE = False
 WEBCAM = True
 DATA_SOURCE = '0'      # folder path for inference image or video, 0 for webcam

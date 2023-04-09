@@ -12,6 +12,7 @@ from ops.models import TSN
 from ops.transforms import GroupScale, GroupCenterCrop, Stack, ToTorchFormatTensor, GroupNormalize 
 from numpy.random import randint
 from yolo_realtime.yolo_wrapper import *
+from action_transition_graph.graph_connector import GraphConnector
 import argparse
 
 parser = argparse.ArgumentParser(description='TSM for phone packaging recognition')
@@ -22,6 +23,7 @@ parser.add_argument('-t','--thres', help='Softmax threshold', default=0.1, type=
 parser.add_argument('-w','--webcam', help='Using external webcam', default=False)
 parser.add_argument('-i','--idcam', help='ID of camera', default=1, type=int)
 parser.add_argument('-k','--topk', help='Print top-k', default=1, type=int)
+parser.add_argument('-p','--path', help='Model path id', default=1, type=int)
 args = vars(parser.parse_args())
 
 DEVICE = 'cuda'
@@ -52,13 +54,12 @@ PATHS = [
     'checkpoints/no_action_shift_8/ckpt.best.pth.tar', #1
     'checkpoints/extradata_slidingwindow32+64_shift8/ckpt.best.pth.tar', #2
     'checkpoints/extradata_slidingwindow32_shift8/ckpt.best.pth.tar', #3
-    'checkpoints/no_action_shift_8/ckpt.best.pth.tar' #4
+    'checkpoints/noaction_extradata_slidingwindow32+64_shift8/ckpt.best.pth.tar' #4
 ]
 
-yolov7 = Yolo_Wrapper()
 
 def get_executor():
-    path_pretrain = PATHS[0]
+    path_pretrain = PATHS[args['path']]
     # is_shift, shift_div, shift_place = parse_shift_option_from_log_name(path_pretrain)
     # base_model = path_pretrain.split('TSM_')[1].split('_')[2]
     is_shift, shift_div, shift_place = True, 8, "blockres"
@@ -118,7 +119,7 @@ def get_transform():
 def process_output(idx_, history):
     # idx_: the output of current frame
     # history: a list containing the history of predictions
-    if not REFINE_OUTPUT:
+    if not REFINE_OUTPUT or len(history) < 3:
         return idx_, history
 
     max_hist_len = 32  # max history buffer
@@ -179,13 +180,14 @@ def main():
     history_lens = [32]
     history_logit = []
 
+    # yolov7 = Yolo_Wrapper()
+    conn = GraphConnector()
+
     print("Ready!")
     while True:
         ret, img = cap.read()  # (480, 640, 3) 0 ~ 255
-        # tmp=np.random.rand(480,640,3)*255
-        with torch.no_grad():
-            yolov7.detect([img])
-        print("BUGGGGGGGGGGGGGG")
+        # with torch.no_grad():
+        #     yolov7.detect([img])
         
         if not ret:
             print("failed to grab frame")
@@ -252,6 +254,9 @@ def main():
         for i, idx_ in enumerate(idx_s[::-1]):
             acc = softmax[idx_]
             
+            if acc > SOFTMAX_THRES:
+                conn.send(f"{idx_} {acc}")
+
             cv2.putText(whiteboard, f"{CATEGORIES[idx_] if acc>SOFTMAX_THRES else '-'}",
                         (8, int(height / 16) + i*25),
                         cv2.FONT_HERSHEY_SIMPLEX,
@@ -262,10 +267,10 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.7, (0, 0, 0), 2)
         
-        cv2.putText(whiteboard, f"FPS: {1.0 / exec_time:2f}",
-                    (8, height - 30),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7, (0, 0, 0), 2)
+        # cv2.putText(whiteboard, f"FPS: {1.0 / exec_time:2f}",
+        #             (8, int(height) / 2),
+        #             cv2.FONT_HERSHEY_SIMPLEX,
+        #             0.7, (0, 0, 0), 2)
 
         img = np.concatenate((img, whiteboard), axis=0)
         cv2.imshow(WINDOW_NAME, img)
