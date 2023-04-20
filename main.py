@@ -14,6 +14,7 @@ from numpy.random import randint
 from yolo_realtime.yolo_wrapper import *
 from action_transition_graph.graph_connector import GraphConnector
 import argparse
+import os
 
 parser = argparse.ArgumentParser(description='TSM for phone packaging recognition')
 parser.add_argument('-c','--class', default=11, help='Number of action class', required=False, type=int)
@@ -24,6 +25,8 @@ parser.add_argument('-w','--webcam', help='Using external webcam', default=False
 parser.add_argument('-i','--idcam', help='ID of camera', default=1, type=int)
 parser.add_argument('-k','--topk', help='Print top-k', default=1, type=int)
 parser.add_argument('-p','--path', help='Model path id', default=1, type=int)
+parser.add_argument('-v','--use-video', help='Use video in this path instead of camera',
+                    default='none', type=str)
 args = vars(parser.parse_args())
 
 DEVICE = 'cuda'
@@ -35,6 +38,7 @@ HISTORY_LOGIT = args['logit']
 REFINE_OUTPUT = args['refine']
 LOGITECH_CAM = args['webcam']
 CAMERA_ID = args['idcam']
+USE_VIDEO_PATH = args['use-video']
 CATEGORIES = [
     "open phone box",
     "take out phone",
@@ -149,17 +153,32 @@ def get_offset_segment(num_frames):
     return offsets
 
 
-def main():
-    print("Open camera...")
-    if LOGITECH_CAM:
-        cap = cv2.VideoCapture(CAMERA_ID, apiPreference=CAP_DSHOW)
+def stream_frames():
+    if USE_VIDEO_PATH != 'none':
+        #### Read frames from images
+        all_images = []
+        for img_name in os.listdir(USE_VIDEO_PATH):
+            img = cv2.imread(os.path.join(USE_VIDEO_PATH, img_name))
+            all_images.append(img)
+        for img in all_images:
+            yield True, img
     else:
-        cap = cv2.VideoCapture(CAMERA_ID)
-    print(cap)
+        print("Open camera...")
+        # set a lower resolution for speed up
+        # cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+        # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+        if LOGITECH_CAM:
+            cap = cv2.VideoCapture(CAMERA_ID, apiPreference=CAP_DSHOW)
+        else:
+            cap = cv2.VideoCapture(CAMERA_ID)
+        print(cap)
+        while True:
+            yield cap.read()
+        cap.release()
 
-    # set a lower resolution for speed up
-    # cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-    # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+
+def main():
+    frames = stream_frames()
 
     # env variables
     full_screen = False
@@ -185,7 +204,7 @@ def main():
 
     print("Ready!")
     while True:
-        ret, img = cap.read()  # (480, 640, 3) 0 ~ 255
+        ret, img = next(frames)  # (480, 640, 3) 0 ~ 255
         # with torch.no_grad():
         #     yolov7.detect([img])
         
@@ -284,7 +303,6 @@ def main():
             cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_FULLSCREEN, 
                                   cv2.WINDOW_FULLSCREEN if full_screen else cv2.WINDOW_NORMAL)
 
-    cap.release()
     cv2.destroyAllWindows()
 
 
@@ -302,16 +320,6 @@ if __name__ == "__main__":
 #     else:
 #         return False, None, None
 
-##### Read frames from images
-# all_images = []
-# dirname = "frames/4_1_2_20221105"
-# for img_name in os.listdir(dirname):
-# # for i in range(1004, 1045 + 1):
-# #     img_name = f"{i:010d}.jpg"
-#     img = cv2.imread(os.path.join(dirname, img_name))
-#     all_images.append(img)
-#     # cv2.imshow("YO", img)
-#     # cv2.waitKey(100)
 ##### Load images
 # for image_index in range(len(all_images)):
     # img = all_images[image_index]        
