@@ -4,6 +4,7 @@ frames/
 mobilenetv2_jester_online.pth.tar
 TSM_PhonePackaging_RGB_resnet50_shift8_blockres_avg_segment8_e50.pth.tar
 ops/__pycache__/
+videos/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

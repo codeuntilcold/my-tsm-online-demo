@@ -163,15 +163,24 @@ def get_offset_segment(num_frames):
     return offsets
 
 
+all_images = []
 def stream_frames():
     if USE_VIDEO_PATH != 'none':
         #### Read frames from images
-        all_images = []
-        for img_name in os.listdir(USE_VIDEO_PATH):
-            img = cv2.imread(os.path.join(USE_VIDEO_PATH, img_name))
-            all_images.append(img)
-        for img in all_images:
+        count = 0
+        vidcap = cv2.VideoCapture(USE_VIDEO_PATH)
+        # for img_name in os.listdir(USE_VIDEO_PATH):
+            # img = cv2.imread(os.path.join(USE_VIDEO_PATH, img_name))
+            
+            # all_images.append(img)
+            # count += 1
+            # if count == 600:
+            #     break
+        success = True
+        while success: 
+            success, img = vidcap.read()
             yield True, img
+    # for img in all_images:
     else:
         print("Open camera...")
         # set a lower resolution for speed up
@@ -194,7 +203,7 @@ def main():
     full_screen = False
     WINDOW_NAME = 'Phone Packaging Inspection'
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(WINDOW_NAME, 640, 640)
+    cv2.resizeWindow(WINDOW_NAME, 710, 760)
     cv2.moveWindow(WINDOW_NAME, 0, 0)
     cv2.setWindowTitle(WINDOW_NAME, WINDOW_NAME)
 
@@ -210,19 +219,26 @@ def main():
     history_logit = []
 
     # Set up buffer for active object detection
-    yolov7 = Yolo_Wrapper(device='cpu')
+    yolov7 = Yolo_Wrapper()
     buffer_aod = []
     aod_model = AOD(numChannels=20, classes=5)
-    # aod_model.load_state_dict(torch.load('/content/drive/MyDrive/Hiep/tsm_yolo_extra_data_5_cls')['state_dict'])
-    aod_model.to(DEVICE)
+    aod_model.load_state_dict(torch.load(
+        './yolo_checkpoints/tsm_yolo_extra_data_5_cls',
+        map_location=torch.device(DEVICE))['state_dict'])
+    # aod_model.to('cuda:0')
     aod_model.eval()
+    
+    conn = GraphConnector()
 
     print("Ready!")
     while True:
         ret, img = next(frames)  # (480, 640, 3) 0 ~ 255
+
         # with torch.no_grad():
-        buffer_aod.append(preprocess_yolo_output(yolov7.detect([img])))
-        buffer_aod = buffer_aod[-64:]
+        # buffer_aod.append(preprocess_yolo_output(yolov7.detect([img])))
+        # print('yolo v7 output: ', buffer_aod[-1])
+
+        # buffer_aod = buffer_aod[-64:]
 
         if not ret:
             print("failed to grab frame")
@@ -242,21 +258,34 @@ def main():
         inputs = []
         inputs_aod = []
         for w in history_lens:
-            window = buffer_aod[-w:]
+            # window = buffer_aod[-w:]
+            # offset = get_offset_segment(len(window))
+            # # inputs.append(window[offset])
+            # windowed_buffer = buffer_aod[-w:]
+            # windowed_buffer = windowed_buffer if len(windowed_buffer) > 1 else \
+            #     windowed_buffer + windowed_buffer
+            # inputs_aod.append(np.array(windowed_buffer)[offset.reshape(-1).astype(int)].tolist())
+
+            # Prepare input for TSM Model
+            window = buffer[-w:]
             offset = get_offset_segment(len(window))
-            # inputs.append(window[offset])
-            windowed_buffer = buffer_aod[-w:]
-            windowed_buffer = windowed_buffer if len(windowed_buffer) > 1 else \
-                windowed_buffer + windowed_buffer
-            inputs_aod.append(np.array(windowed_buffer)[offset.reshape(-1).astype(int)].tolist())
-
+            inputs.append(window[offset])
+        
         # For each input, execute and get output feature
-
-        feats_aod = []
-        for inp in inputs_aod:
-            inp = torch.exp(aod_model(torch.stack(inp).T.unsqueeze(0))).to(DEVICE)
-            feats_aod.append(inp)
+        feats = []
+        for inp in inputs:
+            inp = inp.to(DEVICE)
+            feats.append(executor(inp))
             inp.detach()
+            
+        # feats_aod = []
+        # for inp in inputs_aod:
+        #     inp = torch.exp(aod_model(torch.stack(inp).T.unsqueeze(0))).to(DEVICE)
+        #     feats_aod.append(inp)
+        #     inp.detach()
+        
+        # aod_label = CATEGORIES_OBJECTS[torch.argmax(feats_aod[0])]
+        # aod_prob = torch.max(feats_aod[0])
 
         # For each output feature, calculate softmax
         softmaxes = []
@@ -287,7 +316,7 @@ def main():
         t2 = time.time()
         exec_time = t2 - t1
 
-        # img = cv2.resize(img, (640, 480))
+        img = cv2.resize(img, (640, 480))
         img = img[:, ::-1]
         height, width, _ = img.shape
         whiteboard = np.zeros([height // 2, width, 3]).astype('uint8') + 255
@@ -308,10 +337,20 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.7, (0, 0, 0), 2)
         
-        # cv2.putText(whiteboard, f"FPS: {1.0 / exec_time:2f}",
-        #             (8, int(height) / 2),
+        cv2.putText(whiteboard, f"FPS: {int(1.0 / exec_time)}",
+                    (8, int(height / 16) + 8*25),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7, (100, 0, 0), 2)
+        
+        # cv2.putText(whiteboard, f"AOD: {aod_label}",
+        #             (8, int(height / 16) + 6*25),
         #             cv2.FONT_HERSHEY_SIMPLEX,
-        #             0.7, (0, 0, 0), 2)
+        #             0.7, (0, 0, 255), 2)
+        
+        # cv2.putText(whiteboard, f"{aod_prob:.2f}",
+        #             (width - 170, int(height / 16) + 6*25),
+        #             cv2.FONT_HERSHEY_SIMPLEX,
+        #             0.7, (0, 0, 255), 2)
 
         img = np.concatenate((img, whiteboard), axis=0)
         cv2.imshow(WINDOW_NAME, img)

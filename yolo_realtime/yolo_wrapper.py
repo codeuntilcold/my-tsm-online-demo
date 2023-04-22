@@ -78,6 +78,7 @@ class Yolo_Wrapper:  # multiple IP or RTSP cameras
             pred = apply_classifier(pred, self.modelc, img, im0s)
         # Process detections
         # print(pred)
+        processed_pred = []
         for i, det in enumerate(pred):  # detections per image
             p, s, im0 = '0', '%g: ' % i, im0s[i].copy()
 
@@ -93,16 +94,18 @@ class Yolo_Wrapper:  # multiple IP or RTSP cameras
                 for *xyxy, conf, cls in reversed(det):
                     xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
                     line = (cls, *xywh, conf)  # label format
+                    processed_pred.append(line)
                     label = f'{self.names[int(cls)]} {conf:.2f}'
                     
                     if "Hand" not in label and conf > 0.4:
                         plot_one_box(xyxy, im0, label=label, color=self.colors[int(cls)], line_thickness=1)
 
-                    # print(('%g ' * len(line)).rstrip() % line)
+                    # # print(('%g ' * len(line)).rstrip() % line)
             cv2.putText(im0, f"{len(det)}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX,
                         0.7, (0, 0, 255), 2)
             cv2.imshow("aaa", im0)
         cv2.waitKey(1)
+        return processed_pred
 
     def pre_process(self, img0):
         img = [self.letterbox(x, self.img_size, auto=True, stride=self.stride)[0] for x in img0]
