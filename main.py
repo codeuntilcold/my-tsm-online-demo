@@ -9,12 +9,13 @@ import torch
 import torchvision
 from PIL import Image
 from ops.models import TSN
-from ops.transforms import GroupScale, GroupCenterCrop, Stack, ToTorchFormatTensor, GroupNormalize 
+from ops.transforms import GroupScale, GroupCenterCrop, Stack, ToTorchFormatTensor, GroupNormalize
 from numpy.random import randint
 from yolo_realtime.yolo_wrapper import *
-from action_transition_graph.graph_connector import GraphConnector
+from action_transition_graph.connector import GraphConnector
 import argparse
 import os
+from yolo_realtime.active_object_detection import preprocess_yolo_output, AOD
 
 parser = argparse.ArgumentParser(description='TSM for phone packaging recognition')
 parser.add_argument('-c','--class', default=11, help='Number of action class', required=False, type=int)
@@ -38,7 +39,7 @@ HISTORY_LOGIT = args['logit']
 REFINE_OUTPUT = args['refine']
 LOGITECH_CAM = args['webcam']
 CAMERA_ID = args['idcam']
-USE_VIDEO_PATH = args['use-video']
+USE_VIDEO_PATH = args['use_video']
 CATEGORIES = [
     "open phone box",
     "take out phone",
@@ -53,6 +54,15 @@ CATEGORIES = [
     "close phone box",
     "no action"
 ]
+
+CATEGORIES_OBJECTS = [
+    "phone box",
+    "phone",
+    "instruction paper",
+    "earphones",
+    "charger",
+]
+
 PATHS = [
     'checkpoints/TSM_PhonePackaging_RGB_resnet50_shift8_blockres_avg_segment8_e50/ckpt_sliding.best.pth.tar', #0
     'checkpoints/no_action_shift_8/ckpt.best.pth.tar', #1
@@ -199,15 +209,21 @@ def main():
     history_lens = [32]
     history_logit = []
 
-    # yolov7 = Yolo_Wrapper()
-    conn = GraphConnector()
+    # Set up buffer for active object detection
+    yolov7 = Yolo_Wrapper(device='cpu')
+    buffer_aod = []
+    aod_model = AOD(numChannels=20, classes=5)
+    # aod_model.load_state_dict(torch.load('/content/drive/MyDrive/Hiep/tsm_yolo_extra_data_5_cls')['state_dict'])
+    aod_model.to(DEVICE)
+    aod_model.eval()
 
     print("Ready!")
     while True:
         ret, img = next(frames)  # (480, 640, 3) 0 ~ 255
         # with torch.no_grad():
-        #     yolov7.detect([img])
-        
+        buffer_aod.append(preprocess_yolo_output(yolov7.detect([img])))
+        buffer_aod = buffer_aod[-64:]
+
         if not ret:
             print("failed to grab frame")
             continue
@@ -224,16 +240,22 @@ def main():
         
         # For each history lengths, get sampled input vectors
         inputs = []
+        inputs_aod = []
         for w in history_lens:
-            window = buffer[-w:]
+            window = buffer_aod[-w:]
             offset = get_offset_segment(len(window))
-            inputs.append(window[offset])
-        
+            # inputs.append(window[offset])
+            windowed_buffer = buffer_aod[-w:]
+            windowed_buffer = windowed_buffer if len(windowed_buffer) > 1 else \
+                windowed_buffer + windowed_buffer
+            inputs_aod.append(np.array(windowed_buffer)[offset.reshape(-1).astype(int)].tolist())
+
         # For each input, execute and get output feature
-        feats = []
-        for inp in inputs:
-            inp = inp.to(DEVICE)
-            feats.append(executor(inp))
+
+        feats_aod = []
+        for inp in inputs_aod:
+            inp = torch.exp(aod_model(torch.stack(inp).T.unsqueeze(0))).to(DEVICE)
+            feats_aod.append(inp)
             inp.detach()
 
         # For each output feature, calculate softmax
