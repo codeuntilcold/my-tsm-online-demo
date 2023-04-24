@@ -1,0 +1,43 @@
+weights: /content/drive/MyDrive/Object Detection/yolov7-tiny.pt
+cfg: cfg/training/yolov7-tiny-phonepackaging.yaml
+data: /content/drive/MyDrive/Object Detection/dataset/data.yaml
+hyp: data/hyp.scratch.tiny.yaml
+epochs: 150
+batch_size: 32
+img_size:
+- 640
+- 640
+rect: false
+resume: false
+nosave: false
+notest: false
+noautoanchor: false
+evolve: false
+bucket: ''
+cache_images: false
+image_weights: false
+device: '0'
+multi_scale: false
+single_cls: false
+adam: false
+sync_bn: false
+local_rank: -1
+workers: 4
+project: runs/train
+entity: null
+name: yolov7_tiny_phone_packaging_enhance_dataset
+exist_ok: false
+quad: false
+linear_lr: false
+label_smoothing: 0.0
+upload_dataset: false
+bbox_interval: -1
+save_period: -1
+artifact_alias: latest
+freeze:
+- 0
+v5_metric: false
+world_size: 1
+global_rank: -1
+save_dir: runs/train/yolov7_tiny_phone_packaging_enhance_dataset
+total_batch_size: 32
