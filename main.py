@@ -28,6 +28,8 @@ parser.add_argument('-k','--topk', help='Print top-k', default=1, type=int)
 parser.add_argument('-p','--path', help='Model path id', default=1, type=int)
 parser.add_argument('-v','--use-video', help='Use video in this path instead of camera',
                     default='none', type=str)
+parser.add_argument('-o','--object-detection', 
+                    help='Use and visualize object detection', default=False, type=bool)
 args = vars(parser.parse_args())
 
 DEVICE = 'cuda'
@@ -40,6 +42,7 @@ REFINE_OUTPUT = args['refine']
 LOGITECH_CAM = args['webcam']
 CAMERA_ID = args['idcam']
 USE_VIDEO_PATH = args['use_video']
+USE_YOLO = args['object_detection']
 CATEGORIES = [
     "open phone box",
     "take out phone",
@@ -166,21 +169,11 @@ def get_offset_segment(num_frames):
 all_images = []
 def stream_frames():
     if USE_VIDEO_PATH != 'none':
-        #### Read frames from images
-        count = 0
         vidcap = cv2.VideoCapture(USE_VIDEO_PATH)
-        # for img_name in os.listdir(USE_VIDEO_PATH):
-            # img = cv2.imread(os.path.join(USE_VIDEO_PATH, img_name))
-            
-            # all_images.append(img)
-            # count += 1
-            # if count == 600:
-            #     break
         success = True
         while success: 
             success, img = vidcap.read()
             yield True, img
-    # for img in all_images:
     else:
         print("Open camera...")
         # set a lower resolution for speed up
@@ -219,14 +212,15 @@ def main():
     history_logit = []
 
     # Set up buffer for active object detection
-    yolov7 = Yolo_Wrapper()
-    buffer_aod = []
-    aod_model = AOD(numChannels=20, classes=5)
-    aod_model.load_state_dict(torch.load(
-        './yolo_checkpoints/tsm_yolo_extra_data_5_cls',
-        map_location=torch.device(DEVICE))['state_dict'])
-    # aod_model.to('cuda:0')
-    aod_model.eval()
+    if USE_YOLO:
+        yolov7 = Yolo_Wrapper()
+        buffer_aod = []
+        aod_model = AOD(numChannels=20, classes=5)
+        aod_model.load_state_dict(torch.load(
+            './yolo_checkpoints/tsm_yolo_extra_data_5_cls',
+            map_location=torch.device(DEVICE))['state_dict'])
+        # aod_model.to('cuda:0')
+        aod_model.eval()
     
     conn = GraphConnector()
 
@@ -238,7 +232,8 @@ def main():
         # buffer_aod.append(preprocess_yolo_output(yolov7.detect([img])))
         # print('yolo v7 output: ', buffer_aod[-1])
 
-        # buffer_aod = buffer_aod[-64:]
+        if USE_YOLO:
+            buffer_aod = buffer_aod[-64:]
 
         if not ret:
             print("failed to grab frame")
@@ -258,13 +253,14 @@ def main():
         inputs = []
         inputs_aod = []
         for w in history_lens:
-            # window = buffer_aod[-w:]
-            # offset = get_offset_segment(len(window))
-            # # inputs.append(window[offset])
-            # windowed_buffer = buffer_aod[-w:]
-            # windowed_buffer = windowed_buffer if len(windowed_buffer) > 1 else \
-            #     windowed_buffer + windowed_buffer
-            # inputs_aod.append(np.array(windowed_buffer)[offset.reshape(-1).astype(int)].tolist())
+            if USE_YOLO:
+                window = buffer_aod[-w:]
+                offset = get_offset_segment(len(window))
+                # inputs.append(window[offset])
+                windowed_buffer = buffer_aod[-w:]
+                windowed_buffer = windowed_buffer if len(windowed_buffer) > 1 else \
+                    windowed_buffer + windowed_buffer
+                inputs_aod.append(np.array(windowed_buffer)[offset.reshape(-1).astype(int)].tolist())
 
             # Prepare input for TSM Model
             window = buffer[-w:]
@@ -278,14 +274,15 @@ def main():
             feats.append(executor(inp))
             inp.detach()
             
-        # feats_aod = []
-        # for inp in inputs_aod:
-        #     inp = torch.exp(aod_model(torch.stack(inp).T.unsqueeze(0))).to(DEVICE)
-        #     feats_aod.append(inp)
-        #     inp.detach()
-        
-        # aod_label = CATEGORIES_OBJECTS[torch.argmax(feats_aod[0])]
-        # aod_prob = torch.max(feats_aod[0])
+        if USE_YOLO:
+            feats_aod = []
+            for inp in inputs_aod:
+                inp = torch.exp(aod_model(torch.stack(inp).T.unsqueeze(0))).to(DEVICE)
+                feats_aod.append(inp)
+                inp.detach()
+            
+            aod_label = CATEGORIES_OBJECTS[torch.argmax(feats_aod[0])]
+            aod_prob = torch.max(feats_aod[0])
 
         # For each output feature, calculate softmax
         softmaxes = []
@@ -342,15 +339,16 @@ def main():
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7, (100, 0, 0), 2)
         
-        # cv2.putText(whiteboard, f"AOD: {aod_label}",
-        #             (8, int(height / 16) + 6*25),
-        #             cv2.FONT_HERSHEY_SIMPLEX,
-        #             0.7, (0, 0, 255), 2)
-        
-        # cv2.putText(whiteboard, f"{aod_prob:.2f}",
-        #             (width - 170, int(height / 16) + 6*25),
-        #             cv2.FONT_HERSHEY_SIMPLEX,
-        #             0.7, (0, 0, 255), 2)
+        if USE_YOLO:
+            cv2.putText(whiteboard, f"AOD: {aod_label}",
+                        (8, int(height / 16) + 6*25),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7, (0, 0, 255), 2)
+            
+            cv2.putText(whiteboard, f"{aod_prob:.2f}",
+                        (width - 170, int(height / 16) + 6*25),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7, (0, 0, 255), 2)
 
         img = np.concatenate((img, whiteboard), axis=0)
         cv2.imshow(WINDOW_NAME, img)
@@ -370,6 +368,10 @@ def main():
 if __name__ == "__main__":
     main()
 
+#####
+#    Code graveyard
+#####
+
 # Load the MobileNet weights, return an executor and context
 # def parse_shift_option_from_log_name(log_name):
 #     if 'shift' in log_name:
@@ -380,7 +382,12 @@ if __name__ == "__main__":
 #         return True, int(strings[i].replace('shift', '')), strings[i + 1]
 #     else:
 #         return False, None, None
-
+# for img_name in os.listdir(USE_VIDEO_PATH):
+# img = cv2.imread(os.path.join(USE_VIDEO_PATH, img_name))
+# all_images.append(img)
+# count += 1
+# if count == 600:
+#     break
 ##### Load images
 # for image_index in range(len(all_images)):
     # img = all_images[image_index]        
