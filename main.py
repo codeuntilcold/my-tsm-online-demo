@@ -29,7 +29,7 @@ parser.add_argument('-p','--path', help='Model path id', default=1, type=int)
 parser.add_argument('-a','--aod-path', help='AOD path id', default=1, type=int)
 parser.add_argument('-v','--use-video', help='Use video in this path instead of camera',
                     default='none', type=str)
-parser.add_argument('-o','--object-detection', 
+parser.add_argument('-o','--object-detection',
                     help='Use and visualize object detection', default=False, type=bool)
 parser.add_argument('-g','--graph', help='Send data to graph', default=False)
 args = vars(parser.parse_args())
@@ -80,6 +80,25 @@ PATHS = [
     'checkpoints/noaction_extradata_slidingwindow32+64_shift8/ckpt.best.pth.tar' #4
 ]
 
+def convert_aod_to_action(feats_aod):
+    label_map = {
+    -1: -1,
+    0: 0,
+    1: 1,
+    2: 2,
+    3: 3,
+    4: 4,
+    5: 4,
+    6: 3,
+    7: 2,
+    8: 1,
+    9: 1,
+    10:0
+    }
+    feats_action = []
+    for i in range(11):
+        feats_action.append(feats_aod[label_map[i]])
+    return torch.FloatTensor(feats_action)
 AOD_PATH = [
     'yolo_checkpoints/tsm_yolo_extra_data_5_cls_all_data_augment_100' #0
     'yolo_checkpoints/tsm_yolo_extra_data_5_cls_all_data', #1
@@ -185,7 +204,7 @@ def stream_frames():
         vidcap = cv2.VideoCapture(USE_VIDEO_PATH)
         # vidcap.set(cv2.CAP_PROP_FPS, 30)
         success = True
-        while success: 
+        while success:
             success, img = vidcap.read()
             yield True, img
     else:
@@ -256,7 +275,7 @@ def main():
         if not ret:
             print("failed to grab frame")
             continue
-        
+
         t1 = time.time()
 
         img_resize = cv2.resize(img, (256, 256))
@@ -266,7 +285,7 @@ def main():
         # Save input up to present
         buffer = torch.cat((buffer, input_var))
         buffer = buffer[-64:]
-        
+
         # For each history lengths, get sampled input vectors
         inputs = []
         inputs_aod = []
@@ -284,30 +303,32 @@ def main():
             window = buffer[-w:]
             offset = get_offset_segment(len(window))
             inputs.append(window[offset])
-        
+
         # For each input, execute and get output feature
         feats = []
         for inp in inputs:
             inp = inp.to(DEVICE)
             feats.append(executor(inp))
             inp.detach()
-            
+
         if USE_YOLO:
             feats_aod = []
             for inp in inputs_aod:
                 inp = torch.exp(aod_model(torch.stack(inp).T.unsqueeze(0))).to(DEVICE)
                 feats_aod.append(inp)
                 inp.detach()
-            
+
             aod_label = CATEGORIES_OBJECTS[torch.argmax(feats_aod[0])]
             aod_prob = torch.max(feats_aod[0])
+
+            feat_action = convert_aod_to_action(feats_aod[0].tolist())
 
         # For each output feature, calculate softmax
         softmaxes = []
         for feat in feats:
             feat = feat.detach().numpy() if DEVICE == 'cpu' \
                 else feat.detach().cpu().numpy()
-            
+
             feat_np = feat.reshape(-1)
             feat_np -= feat_np.max()
             softmax = np.exp(feat_np) / np.sum(np.exp(feat_np))
@@ -318,7 +339,7 @@ def main():
         weight_per_window = np.array([[1]*NUM_CLASS, [1]*NUM_CLASS])
         softmaxes = np.sum(softmaxes * weight_per_window, axis=0)
         idx_s = np.argsort(softmaxes)[-TOP_K:]
-        
+
         if HISTORY_LOGIT:
             history_logit.append(feat)
             history_logit = history_logit[-12:]
@@ -346,23 +367,23 @@ def main():
                         (8, int(height / 16) + i*25),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.7, (0, 0, 0), 2)
-            
+
             cv2.putText(whiteboard, f"{acc:.2f}",
                         (width - 170, int(height / 16) + i*25),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.7, (0, 0, 0), 2)
-        
+
         cv2.putText(whiteboard, f"FPS: {int(1.0 / exec_time)}",
                     (8, int(height / 16) + 8*25),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7, (100, 0, 0), 2)
-        
+
         if USE_YOLO:
             cv2.putText(whiteboard, f"AOD: {aod_label}",
                         (8, int(height / 16) + 6*25),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.7, (0, 0, 255), 2)
-            
+
             cv2.putText(whiteboard, f"{aod_prob:.2f}",
                         (width - 170, int(height / 16) + 6*25),
                         cv2.FONT_HERSHEY_SIMPLEX,
@@ -377,7 +398,7 @@ def main():
         elif key == ord('F') or key == ord('f'):  # full screen
             print('Toggle full screen option!')
             full_screen = not full_screen
-            cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_FULLSCREEN, 
+            cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_FULLSCREEN,
                                   cv2.WINDOW_FULLSCREEN if full_screen else cv2.WINDOW_NORMAL)
 
     cv2.destroyAllWindows()
@@ -408,7 +429,7 @@ if __name__ == "__main__":
 #     break
 ##### Load images
 # for image_index in range(len(all_images)):
-    # img = all_images[image_index]        
+    # img = all_images[image_index]
 ##### Write image to folder
 # cv2.imwrite(f"4_1_1\\{image_index:010d}.png", img)
 ##### Show transformed image
