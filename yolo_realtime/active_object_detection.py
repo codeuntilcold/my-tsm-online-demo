@@ -8,20 +8,28 @@ from torch import flatten
 import torch
 
 def preprocess_yolo_output(yolo_ouput):
+    # fix_label_dict = {
+    #     0: 0,
+    #     1:4,
+    #     2:3,
+    #     3:2,
+    #     4:1
+    # }
     result = torch.zeros(20)
     map_label_prob = {}
     for ele in yolo_ouput:
         label = int(ele[0].item())
+        # label = fix_label_dict[label]
         coordinate = ele[1:-1]
         prob = ele[-1].item()
-        if label == 3:
-            continue
+        # if label == 3:
+        #     continue
         if label in map_label_prob.keys():
             if prob < map_label_prob[label]:
                 continue
         map_label_prob[label] = prob
         # Shift label larger 3 backward (cause remove label 3)
-        label = label - 1 if label > 3 else label
+        # label = label - 1 if label > 3 else label
         result[label*4:(label+1)*4] = torch.tensor(coordinate)
     return result
 

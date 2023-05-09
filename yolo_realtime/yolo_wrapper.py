@@ -94,13 +94,16 @@ class Yolo_Wrapper:  # multiple IP or RTSP cameras
                 for *xyxy, conf, cls in reversed(det):
                     xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
                     line = (cls, *xywh, conf)  # label format
+                    
                     processed_pred.append(line)
                     label = f'{self.names[int(cls)]} {conf:.2f}'
                     
-                    if "Hand" not in label and conf > 0.4:
-                        plot_one_box(xyxy, im0, label=label, color=self.colors[int(cls)], line_thickness=1)
+                    # if "Hand" not in label and conf > 0.4:
+                    plot_one_box(xyxy, im0, label=label, color=self.colors[int(cls)], line_thickness=1)
 
-                    # # print(('%g ' * len(line)).rstrip() % line)
+                #     print(('%g ' * len(line)).rstrip() % line)
+                # print('-------------------------------------')
+
             cv2.putText(im0, f"{len(det)}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX,
                         0.7, (0, 0, 255), 2)
             cv2.imshow("aaa", im0)

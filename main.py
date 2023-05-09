@@ -26,10 +26,12 @@ parser.add_argument('-w','--webcam', help='Using external webcam', default=False
 parser.add_argument('-i','--idcam', help='ID of camera', default=1, type=int)
 parser.add_argument('-k','--topk', help='Print top-k', default=1, type=int)
 parser.add_argument('-p','--path', help='Model path id', default=1, type=int)
+parser.add_argument('-a','--aod-path', help='AOD path id', default=1, type=int)
 parser.add_argument('-v','--use-video', help='Use video in this path instead of camera',
                     default='none', type=str)
 parser.add_argument('-o','--object-detection', 
                     help='Use and visualize object detection', default=False, type=bool)
+parser.add_argument('-g','--graph', help='Send data to graph', default=False)
 args = vars(parser.parse_args())
 
 DEVICE = 'cuda'
@@ -43,6 +45,7 @@ LOGITECH_CAM = args['webcam']
 CAMERA_ID = args['idcam']
 USE_VIDEO_PATH = args['use_video']
 USE_YOLO = args['object_detection']
+USE_GRAPH = args['graph']
 CATEGORIES = [
     "open phone box",
     "take out phone",
@@ -58,13 +61,16 @@ CATEGORIES = [
     "no action"
 ]
 
-CATEGORIES_OBJECTS = [
-    "phone box",
-    "phone",
-    "instruction paper",
-    "earphones",
-    "charger",
-]
+# CATEGORIES_OBJECTS = [
+#     "phone box",
+#     "phone",
+#     "instruction paper",
+#     "earphones",
+#     "charger",
+# ]
+
+CATEGORIES_OBJECTS = ['Boxcover', 'charger', 'earphones', 'instruction paper', 'phone']
+
 
 PATHS = [
     'checkpoints/TSM_PhonePackaging_RGB_resnet50_shift8_blockres_avg_segment8_e50/ckpt_sliding.best.pth.tar', #0
@@ -74,6 +80,13 @@ PATHS = [
     'checkpoints/noaction_extradata_slidingwindow32+64_shift8/ckpt.best.pth.tar' #4
 ]
 
+AOD_PATH = [
+    'yolo_checkpoints/tsm_yolo_extra_data_5_cls_all_data_augment_100' #0
+    'yolo_checkpoints/tsm_yolo_extra_data_5_cls_all_data', #1
+    'yolo_checkpoints/tsm_yolo_extra_data_5_cls_all_data_augment_75_skip_inspect_phone', #2 (0.75 augmentation)
+    'yolo_checkpoints/tsm_yolo_extra_data_5_cls_all_data_augment_100_skip_inspect_phone', #3 (1 augmentation)
+    # 'yolo_checkpoints/tsm_yolo_extra_data_5_cls_all_data_augment_100_skip_inspect_phone' #4
+]
 
 def get_executor():
     path_pretrain = PATHS[args['path']]
@@ -170,6 +183,7 @@ all_images = []
 def stream_frames():
     if USE_VIDEO_PATH != 'none':
         vidcap = cv2.VideoCapture(USE_VIDEO_PATH)
+        # vidcap.set(cv2.CAP_PROP_FPS, 30)
         success = True
         while success: 
             success, img = vidcap.read()
@@ -216,23 +230,27 @@ def main():
         yolov7 = Yolo_Wrapper()
         buffer_aod = []
         aod_model = AOD(numChannels=20, classes=5)
-        aod_model.load_state_dict(torch.load(
-            './yolo_checkpoints/tsm_yolo_extra_data_5_cls',
-            map_location=torch.device(DEVICE))['state_dict'])
+        print("=> Load AOD from path", AOD_PATH[args['aod_path']])
+        sd = torch.load(AOD_PATH[args['aod_path']],
+            map_location=torch.device(DEVICE))
+        aod_model.load_state_dict(sd)
         # aod_model.to('cuda:0')
         aod_model.eval()
     
-    conn = GraphConnector()
+    if USE_GRAPH:
+        conn = GraphConnector()
 
     print("Ready!")
     while True:
         ret, img = next(frames)  # (480, 640, 3) 0 ~ 255
 
-        # with torch.no_grad():
-        # buffer_aod.append(preprocess_yolo_output(yolov7.detect([img])))
         # print('yolo v7 output: ', buffer_aod[-1])
 
         if USE_YOLO:
+            with torch.no_grad():
+                yolo_output = preprocess_yolo_output(yolov7.detect([img]))
+                # print(yolo_output)
+                buffer_aod.append(yolo_output)
             buffer_aod = buffer_aod[-64:]
 
         if not ret:
@@ -321,7 +339,7 @@ def main():
         for i, idx_ in enumerate(idx_s[::-1]):
             acc = softmax[idx_]
             
-            if acc > SOFTMAX_THRES:
+            if USE_GRAPH and acc > SOFTMAX_THRES:
                 conn.send(f"{idx_} {acc}")
 
             cv2.putText(whiteboard, f"{CATEGORIES[idx_] if acc>SOFTMAX_THRES else '-'}",
