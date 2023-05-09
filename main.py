@@ -81,24 +81,13 @@ PATHS = [
 ]
 
 def convert_aod_to_action(feats_aod):
-    label_map = {
-    -1: -1,
-    0: 0,
-    1: 1,
-    2: 2,
-    3: 3,
-    4: 4,
-    5: 4,
-    6: 3,
-    7: 2,
-    8: 1,
-    9: 1,
-    10:0
-    }
+    label_map = { 0: 0, 1: 4, 2: 3, 3: 2, 4: 1, 5: 1, 6: 2, 7: 3, 8: 4, 9: 4, 10: 0}
     feats_action = []
+    # print(feats_aod)
     for i in range(11):
         feats_action.append(feats_aod[label_map[i]])
-    return torch.FloatTensor(feats_action)
+    return np.array(feats_action)
+
 AOD_PATH = [
     'yolo_checkpoints/tsm_yolo_extra_data_5_cls_all_data_augment_100' #0
     'yolo_checkpoints/tsm_yolo_extra_data_5_cls_all_data', #1
@@ -321,7 +310,8 @@ def main():
             aod_label = CATEGORIES_OBJECTS[torch.argmax(feats_aod[0])]
             aod_prob = torch.max(feats_aod[0])
 
-            feat_action = convert_aod_to_action(feats_aod[0].tolist())
+            feat_action = convert_aod_to_action(feats_aod[0].squeeze().tolist())
+            # print('AOD SCORE: ',feat_action)
 
         # For each output feature, calculate softmax
         softmaxes = []
@@ -329,9 +319,11 @@ def main():
             feat = feat.detach().numpy() if DEVICE == 'cpu' \
                 else feat.detach().cpu().numpy()
 
-            feat_np = feat.reshape(-1)
+            feat_np = feat.reshape(-1) * feat_action * feat_action
+            # feat_np = feat.reshape(-1)
             feat_np -= feat_np.max()
             softmax = np.exp(feat_np) / np.sum(np.exp(feat_np))
+            # print('TSM SCORE: ', softmax)
             softmaxes.append(softmax)
             idx_ = np.argmax(feat, axis=1)[0] if max(softmax) > SOFTMAX_THRES else idx_no_action
 
