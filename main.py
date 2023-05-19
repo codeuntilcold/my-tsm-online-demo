@@ -89,7 +89,7 @@ def convert_aod_to_action(feats_aod):
     return np.array(feats_action)
 
 AOD_PATH = [
-    'yolo_checkpoints/tsm_yolo_extra_data_5_cls_all_data_augment_100' #0
+    'yolo_checkpoints/tsm_yolo_extra_data_5_cls_all_data_augment_100', #0
     'yolo_checkpoints/tsm_yolo_extra_data_5_cls_all_data', #1
     'yolo_checkpoints/tsm_yolo_extra_data_5_cls_all_data_augment_75_skip_inspect_phone', #2 (0.75 augmentation)
     'yolo_checkpoints/tsm_yolo_extra_data_5_cls_all_data_augment_100_skip_inspect_phone', #3 (1 augmentation)
@@ -218,7 +218,7 @@ def main():
     full_screen = False
     WINDOW_NAME = 'Phone Packaging Inspection'
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(WINDOW_NAME, 710, 760)
+    cv2.resizeWindow(WINDOW_NAME, 760, 760)
     cv2.moveWindow(WINDOW_NAME, 0, 0)
     cv2.setWindowTitle(WINDOW_NAME, WINDOW_NAME)
 
@@ -256,7 +256,9 @@ def main():
 
         if USE_YOLO:
             with torch.no_grad():
-                yolo_output = preprocess_yolo_output(yolov7.detect([img]))
+                height, width, channels = img.shape
+                croppedImage = img[int(height*0.35):height, 0:width]
+                yolo_output = preprocess_yolo_output(yolov7.detect([croppedImage]))
                 # print(yolo_output)
                 buffer_aod.append(yolo_output)
             buffer_aod = buffer_aod[-64:]
@@ -319,7 +321,7 @@ def main():
             feat = feat.detach().numpy() if DEVICE == 'cpu' \
                 else feat.detach().cpu().numpy()
 
-            feat_np = feat.reshape(-1) * feat_action * feat_action
+            feat_np = feat.reshape(-1)
             # feat_np = feat.reshape(-1)
             feat_np -= feat_np.max()
             softmax = np.exp(feat_np) / np.sum(np.exp(feat_np))
@@ -344,7 +346,7 @@ def main():
         t2 = time.time()
         exec_time = t2 - t1
 
-        img = cv2.resize(img, (640, 480))
+        img = cv2.resize(img, (720, 640))
         img = img[:, ::-1]
         height, width, _ = img.shape
         whiteboard = np.zeros([height // 2, width, 3]).astype('uint8') + 255
@@ -357,18 +359,18 @@ def main():
 
             cv2.putText(whiteboard, f"{CATEGORIES[idx_] if acc>SOFTMAX_THRES else '-'}",
                         (8, int(height / 16) + i*25),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7, (0, 0, 0), 2)
+                        cv2.FONT_HERSHEY_DUPLEX,
+                        0.8, (0, 0, 0), 2)
 
             cv2.putText(whiteboard, f"{acc:.2f}",
                         (width - 170, int(height / 16) + i*25),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7, (0, 0, 0), 2)
+                        cv2.FONT_HERSHEY_DUPLEX,
+                        0.8, (0, 0, 0), 2)
 
         cv2.putText(whiteboard, f"FPS: {int(1.0 / exec_time)}",
                     (8, int(height / 16) + 8*25),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7, (100, 0, 0), 2)
+                    cv2.FONT_HERSHEY_DUPLEX,
+                    0.8, (100, 0, 0), 2)
 
         if USE_YOLO:
             cv2.putText(whiteboard, f"AOD: {aod_label}",
