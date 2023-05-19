@@ -352,8 +352,8 @@ def main():
         for i, idx_ in enumerate(idx_s[::-1]):
             acc = softmax[idx_]
             
-            if USE_GRAPH and acc > SOFTMAX_THRES:
-                conn.send(f"{idx_} {acc}")
+            if USE_GRAPH:
+                conn.send(f"{idx_ if acc > SOFTMAX_THRES else -1} {acc}")
 
             cv2.putText(whiteboard, f"{CATEGORIES[idx_] if acc>SOFTMAX_THRES else '-'}",
                         (8, int(height / 16) + i*25),
