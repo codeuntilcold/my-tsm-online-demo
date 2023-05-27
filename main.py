@@ -16,6 +16,7 @@ from action_transition_graph.connector import GraphConnector
 import argparse
 import os
 from yolo_realtime.active_object_detection import preprocess_yolo_output, AOD
+from s_connector import Connector as SConnector
 
 parser = argparse.ArgumentParser(description='TSM for phone packaging recognition')
 parser.add_argument('-c','--class', default=11, help='Number of action class', required=False, type=int)
@@ -69,7 +70,7 @@ CATEGORIES = [
 #     "charger",
 # ]
 
-CATEGORIES_OBJECTS = ['Boxcover', 'charger', 'earphones', 'instruction paper', 'phone']
+CATEGORIES_OBJECTS = ['Boxcover', 'charger', 'earphones', 'instruction_paper', 'phone']
 
 
 PATHS = [
@@ -246,7 +247,8 @@ def main():
         aod_model.eval()
     
     if USE_GRAPH:
-        conn = GraphConnector()
+        # conn = GraphConnector()
+        sconn = SConnector()
 
     print("Ready!")
     while True:
@@ -257,8 +259,9 @@ def main():
         if USE_YOLO:
             with torch.no_grad():
                 height, width, channels = img.shape
-                croppedImage = img[int(height*0.35):height, 0:width]
-                yolo_output = preprocess_yolo_output(yolov7.detect([croppedImage]))
+                croppedImage = img#[int(height*0.35):height, 0:width]
+                label, bbimg = yolov7.detect([croppedImage])
+                yolo_output = preprocess_yolo_output(label)
                 # print(yolo_output)
                 buffer_aod.append(yolo_output)
             buffer_aod = buffer_aod[-64:]
@@ -327,8 +330,10 @@ def main():
             feat = feat.detach().numpy() if DEVICE == 'cpu' \
                 else feat.detach().cpu().numpy()
 
-            feat_np = feat.reshape(-1) * feat_action
-            # feat_np = feat.reshape(-1)
+            feat_np = feat.reshape(-1)
+            if USE_YOLO and aod_label == 'charger':# and aod_prob > 0.7:
+                feat_np *= feat_action
+
             feat_np -= feat_np.max()
             softmax = np.exp(feat_np) / np.sum(np.exp(feat_np))
             # print('TSM SCORE: ', softmax)
@@ -361,8 +366,17 @@ def main():
             acc = softmax[idx_]
             
             if USE_GRAPH:
-                conn.send(f"{idx_ if acc > SOFTMAX_THRES else -1} {acc}")
-                conn.send(f"{idx_ if acc > SOFTMAX_THRES else 11} {acc}")
+                try:
+                    # conn.send(f"{idx_ if acc > SOFTMAX_THRES else 11} {acc}")
+                    if USE_YOLO:
+                        aod_output = f"{aod_label}@{aod_prob}"
+                    else:
+                        aod_output = ""
+                    sconn.send_data(bbimg if USE_YOLO else img, 
+                                    f"{idx_ if acc > SOFTMAX_THRES else 11} {acc}",
+                                    aod_output)
+                except:
+                    pass
 
             cv2.putText(whiteboard, f"{CATEGORIES[idx_] if acc>SOFTMAX_THRES else '-'}",
                         (8, int(height / 16) + i*25),

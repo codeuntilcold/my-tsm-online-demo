@@ -71,7 +71,7 @@ class Yolo_Wrapper:  # multiple IP or RTSP cameras
             # print(pred)
         t2 = time_synchronized()
         # Apply NMS
-        pred = non_max_suppression(pred, 0.7, 0.45, classes=None, agnostic=False)
+        pred = non_max_suppression(pred, 0.6, 0.45, classes=None, agnostic=False)
         t3 = time_synchronized()
         # Apply Classifier
         if self.classify:
@@ -99,7 +99,7 @@ class Yolo_Wrapper:  # multiple IP or RTSP cameras
                     label = f'{self.names[int(cls)]} {conf:.2f}'
                     
                     # if "Hand" not in label and conf > 0.4:
-                    # plot_one_box(xyxy, im0, label=label, color=self.colors[int(cls)], line_thickness=1)
+                    plot_one_box(xyxy, im0, label=label, color=self.colors[int(cls)], line_thickness=1)
 
                 #     print(('%g ' * len(line)).rstrip() % line)
                 # print('-------------------------------------')
@@ -108,7 +108,7 @@ class Yolo_Wrapper:  # multiple IP or RTSP cameras
         #                 0.7, (0, 0, 255), 2)
         #     cv2.imshow("aaa", im0)
         # cv2.waitKey(1)
-        return processed_pred
+        return processed_pred, im0
 
     def pre_process(self, img0):
         img = [self.letterbox(x, self.img_size, auto=True, stride=self.stride)[0] for x in img0]
