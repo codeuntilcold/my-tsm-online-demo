@@ -288,7 +288,13 @@ def main():
                 windowed_buffer = buffer_aod[-w:]
                 windowed_buffer = windowed_buffer if len(windowed_buffer) > 1 else \
                     windowed_buffer + windowed_buffer
-                inputs_aod.append(np.array(windowed_buffer)[offset.reshape(-1).astype(int)].tolist())
+                
+                windowed_buffer = list(map(lambda x: x.tolist(), windowed_buffer))
+                
+                inputs_aod.append(
+                    np.array(windowed_buffer)[
+                        offset.reshape(-1).astype(int)]
+                    .tolist())
 
             # Prepare input for TSM Model
             window = buffer[-w:]
@@ -305,7 +311,7 @@ def main():
         if USE_YOLO:
             feats_aod = []
             for inp in inputs_aod:
-                inp = torch.exp(aod_model(torch.stack(inp).T.unsqueeze(0))).to(DEVICE)
+                inp = torch.exp(aod_model(torch.Tensor(inp).T.unsqueeze(0))).to(DEVICE)
                 feats_aod.append(inp)
                 inp.detach()
 
@@ -321,7 +327,7 @@ def main():
             feat = feat.detach().numpy() if DEVICE == 'cpu' \
                 else feat.detach().cpu().numpy()
 
-            feat_np = feat.reshape(-1)
+            feat_np = feat.reshape(-1) * feat_action
             # feat_np = feat.reshape(-1)
             feat_np -= feat_np.max()
             softmax = np.exp(feat_np) / np.sum(np.exp(feat_np))
@@ -356,6 +362,7 @@ def main():
             
             if USE_GRAPH:
                 conn.send(f"{idx_ if acc > SOFTMAX_THRES else -1} {acc}")
+                conn.send(f"{idx_ if acc > SOFTMAX_THRES else 11} {acc}")
 
             cv2.putText(whiteboard, f"{CATEGORIES[idx_] if acc>SOFTMAX_THRES else '-'}",
                         (8, int(height / 16) + i*25),
